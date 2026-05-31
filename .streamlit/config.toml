@@ -1,0 +1,13 @@
+# QMS 통합 대시보드 — 메인 PC에서 실행 후, 다른 PC는 브라우저로만 접속
+# 이 폴더에서 `streamlit run ...` 할 때 적용됩니다.
+#
+# 다른 PC 접속 주소: http://<메인PC_IP>:8501
+# (메인 PC에서 ipconfig 로 IPv4 확인, 방화벽에서 TCP 8501 인바운드 허용 필요할 수 있음)
+
+[server]
+address = "0.0.0.0"
+port = 8501
+
+[browser]
+# 서버 역할만 할 때 자동으로 로컬 브라우저를 띄우지 않음 (원하면 false 로 바꾸세요)
+gatherUsageStats = false

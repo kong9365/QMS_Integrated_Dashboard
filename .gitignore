@@ -1,0 +1,39 @@
+# ===== Secrets / 환경 =====
+.env
+.env.*
+!secrets.example.env
+.streamlit/secrets.toml
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ===== 캐시 / 데이터 =====
+.qms_cache/
+*_cache.json
+_label_*.json
+_detail_urls.json
+baseline_*.json
+linkage_*_report.json
+backups/
+
+# ===== 로그 =====
+*.log
+
+# ===== 산출물 / 바이너리 (문서·발표자료·이미지) =====
+*.pdf
+*.pptx
+*.docx
+*.zip
+*.png
+figures/
+
+# ===== 에디터 / OS =====
+.vscode/
+.cursor/
+node_modules/
+.DS_Store
+Thumbs.db

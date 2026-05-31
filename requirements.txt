@@ -1,0 +1,25 @@
+# QMS Integrated Dashboard - Python 의존성
+# Python 3.11 ~ 3.13 호환
+
+# 웹 UI
+streamlit>=1.32,<2.0
+
+# 데이터 처리
+pandas>=2.1
+numpy>=1.26
+
+# 시각화
+plotly>=5.20
+
+# HTTP / API
+requests>=2.31
+urllib3>=2.0
+
+# Excel 내보내기 (pd.ExcelWriter)
+openpyxl>=3.1
+
+# 선택: PyArrow (pandas 가 Parquet/Arrow 사용 시)
+pyarrow>=15.0
+
+# PDF 보고서 (qms_pdf_report.py)
+fpdf2>=2.7
