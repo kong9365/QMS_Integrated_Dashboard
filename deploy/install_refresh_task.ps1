@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   QMS 데이터 수집(refresh_job)을 1시간 주기 스케줄 작업(QMS-Refresh)으로 등록한다.
   Task 1.4 (서비스화). 관리자 PowerShell에서 실행.

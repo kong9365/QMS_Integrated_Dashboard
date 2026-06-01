@@ -2,7 +2,33 @@
 
 > 호스트: **Windows**(온프레미스, 항상 켜진 사내 PC 1대). 대시보드를 서비스로 상시 구동하고,
 > 데이터 수집(refresh_job)을 1시간 주기 스케줄로 돌린다.
-> **이 문서의 스크립트는 경로만 채우면 실행 가능하다. 실제 등록은 관리자 PowerShell에서 사용자가 수행한다.**
+
+---
+
+## ✅ 이 호스트에 실제 적용된 구성 (2026-06-01, Step B — 비관리자)
+
+이 PC 계정은 **관리자 상승 불가**(`whoami /groups`: BUILTIN\Administrators = *deny only*, 무결성=Medium).
+→ NSSM 서비스/방화벽(Step A)은 불가. **사용자 수준 작업 스케줄러(Step B)** 로 배포함.
+또한 이 계정은 `schtasks /SC ONLOGON` **등록이 거부**되어(실측 Access denied), **MINUTE/HOURLY 트리거**로 구성.
+
+| 작업 | 트리거 | 동작 | 비고 |
+|------|--------|------|------|
+| `QMS-Dashboard-User` | **5분마다**(`/SC MINUTE /MO 5`) | `deploy\run_app.bat` | streamlit localhost:8501. run_app.bat 이 이미 떠 있으면 건너뜀 → 로그인 직후 기동 + self-heal(죽으면 재기동) 겸용 |
+| `QMS-Refresh-User` | **1시간마다**(`/SC HOURLY`) | `deploy\run_refresh.bat` | .env 주입 후 refresh_job → `.qms_cache`+`_meta.json` |
+
+- 등록: `powershell -ExecutionPolicy Bypass -File deploy\install_user_autostart.ps1`
+- **검증 완료**: 두 작업 등록 성공 / 앱 health 200(127.0.0.1:8501) / Refresh 작업 exit=0, `_meta.json` 16/16 갱신 / 화면 "마지막 갱신·✅16/16" 표기 확인.
+- **되돌리기**:
+  ```
+  schtasks /Delete /TN QMS-Dashboard-User /F
+  schtasks /Delete /TN QMS-Refresh-User /F
+  ```
+- **제약(중요)**: PC 켜짐 **+ 이 사용자가 로그인한 동안에만** 동작. 무로그인 상시 구동 / 부팅 즉시(로그온 전) 실행 / **LAN 공개**는 관리자·IT 권한 필요 → **보류**(현재 localhost 전용).
+- `.bat` 는 **CRLF**(필수) + `run_*.bat` 의 `REPO`/`PYTHON` 경로는 이 호스트 값으로 채워져 있음
+  (`PYTHON=C:\Users\user\AppData\Local\Programs\Python\Python313\python.exe`).
+
+> 아래 §3 이후의 NSSM(Step A) 절차는 **관리자 권한이 생겼을 때**의 대안이다. 현재는 위 Step B 가 적용됨.
+> 스크립트는 경로만 채우면 실행 가능. 실제 등록은 PowerShell에서 사용자가 수행한다.
 
 ## 0. 아키텍처 요약 (왜 둘로 나뉘나)
 

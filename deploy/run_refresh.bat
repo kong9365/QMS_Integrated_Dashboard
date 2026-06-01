@@ -9,7 +9,7 @@ chcp 65001 >nul
 
 REM ----- 경로 (실제 값으로 채우세요) -----
 set "REPO=C:\Users\user\Desktop\Coding\cusor\QMS_Integrated_Dashboard"
-set "PYTHON=C:\PATH\TO\venv\Scripts\python.exe"
+set "PYTHON=C:\Users\user\AppData\Local\Programs\Python\Python313\python.exe"
 REM ---------------------------------------
 
 cd /d "%REPO%" || (echo [ERROR] REPO 경로 이동 실패: %REPO% & exit /b 1)
