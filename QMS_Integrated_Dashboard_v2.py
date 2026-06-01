@@ -9,7 +9,7 @@ QMS 통합 모니터링 대시보드 v2.0 (Streamlit + Plotly)
   streamlit run QMS_Integrated_Dashboard_v2.py
   → .streamlit/config.toml 에서 address=0.0.0.0 로 같은 네트워크 PC가 브라우저로 접속 가능.
 """
-import sys, os, io, json, re, time, asyncio, logging
+import sys, os, io, json, re, time, asyncio, logging, subprocess
 from collections import defaultdict
 from datetime import datetime, date, timedelta
 
@@ -476,11 +476,32 @@ S.inject_sidebar_toggle()
 # 다크모드 토글
 S.dark_mode_toggle()
 
-if st.sidebar.button("↻ 전체 데이터 갱신", use_container_width=True, type="primary"):
-    st.cache_data.clear()
-    DC.clear()
-    st.session_state.pop("_cache_fetch_time", None)
-    st.rerun()
+def _trigger_refresh_job_background() -> bool:
+    """refresh_job 을 백그라운드 subprocess 로 실행(동기 80s 블로킹 금지, Task 1.3).
+
+    캐시를 지우지 않는다(지우면 cache_only 앱이 빈 화면이 됨). 수집이 끝나면
+    refresh_job 이 캐시를 원자적으로 교체하고, 다음 새로고침 때 새 데이터가 보인다.
+    성공적으로 '시작'했으면 True. (완료를 기다리지 않음)
+    """
+    try:
+        subprocess.Popen(
+            [sys.executable, "-m", "qms_pro.jobs.refresh_job"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception:
+        return False
+
+
+# 수동 갱신: 동기 실행(블로킹) 금지. 백그라운드로 refresh_job 만 트리거하고 안내(Task 1.3).
+# 상시 운영의 정규 갱신은 스케줄러(Task 1.4)가 담당한다.
+if st.sidebar.button("↻ 백그라운드 갱신 시작", use_container_width=True, type="primary"):
+    if _trigger_refresh_job_background():
+        st.cache_data.clear()  # 다음 렌더에서 새 캐시를 읽도록 메모이즈만 비움(디스크 캐시는 유지)
+        st.sidebar.info("갱신 시작됨 — 수집 완료 후 새로고침하면 반영됩니다.")
+    else:
+        st.sidebar.warning("갱신 시작 실패 — 스케줄러(Task 1.4) 또는 수동 실행을 사용하세요.")
 
 _load_progress = st.sidebar.progress(0)
 _load_caption = st.sidebar.empty()
@@ -618,9 +639,32 @@ for pk, df_p in ALL_DFS.items():
     else:
         st.sidebar.caption(f"🟢 {label}: {n}건")
 st.sidebar.success(f"총 {total_all}건")
-st.sidebar.caption(f"마지막 갱신: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+
+# ─── 갱신 신뢰성 표기 (Task 1.3) ───
+# refresh_job 이 기록한 _meta.json 기반으로 "마지막 갱신 시각 + 수집 상태 N/16"를 표기.
+# 실패 프로젝트가 있으면 경고 배지로 노출한다(어느 프로젝트가 옛 캐시인지 알 수 있게).
+# NOTE(Phase 2): 이 표기는 종합현황 "수집 상태 카드"로 이전 예정(현재는 11탭 구조라 사이드바).
+_refresh_meta = DA.get_refresh_meta()
+if _refresh_meta.get("source") == "none":
+    # refresh_job 미실행(앱이 직접 채운 캐시만 존재) → 시각 미상. 안내만.
+    st.sidebar.caption("마지막 갱신: (refresh_job 미실행 — 스케줄 수집 전)")
+else:
+    _last = _refresh_meta.get("last_refresh") or "(미상)"
+    _ok = _refresh_meta.get("ok_count", 0)
+    _tot = _refresh_meta.get("total_count", 0)
+    st.sidebar.caption(f"마지막 갱신: {_last}")
+    if _tot and _ok >= _tot:
+        st.sidebar.caption(f"수집 상태: ✅ {_ok}/{_tot}")
+    else:
+        st.sidebar.caption(f"수집 상태: ⚠️ {_ok}/{_tot}")
+        _failed = [p for p, v in (_refresh_meta.get("projects") or {}).items()
+                   if isinstance(v, dict) and v.get("status") != "ok"]
+        if _failed:
+            _shown = ", ".join(_failed[:6]) + (" 외" if len(_failed) > 6 else "")
+            st.sidebar.warning(f"수집 실패 {len(_failed)}건(옛 캐시 표시): {_shown}")
+
 st.sidebar.caption(
-    f"⏱️ 16스텝 수집 {_fetch_elapsed:.1f}s "
+    f"⏱️ 16스텝 로드 {_fetch_elapsed:.1f}s "
     f"(캐시 히트 시 ≈0s)"
 )
 S.cache_age_bar(_fetch_elapsed, ttl=1800)
@@ -2870,22 +2914,48 @@ with tab_settings:
                 "수집 건수": st.column_config.NumberColumn("수집 건수", format="%d건"),
             },
         )
-        st.caption(f"마지막 수집: {datetime.now().strftime('%Y-%m-%d %H:%M')} | 수집 소요: {_fetch_elapsed:.1f}s")
+        # Task 1.3: _meta.json(refresh_job 기록) 기반 실제 수집 시각·상태 표기.
+        # (datetime.now() 는 '앱 렌더 시각'이라 캐시 분리 후엔 오해 소지가 있어 교체)
+        _m = DA.get_refresh_meta()
+        if _m.get("source") == "none":
+            st.caption("마지막 수집: (refresh_job 미실행) | 화면 로드 소요: "
+                       f"{_fetch_elapsed:.1f}s")
+        else:
+            _badge = "✅" if _m.get("ok_count", 0) >= _m.get("total_count", 0) else "⚠️"
+            st.caption(
+                f"마지막 수집: {_m.get('last_refresh', '(미상)')} | "
+                f"수집 상태: {_badge} {_m.get('ok_count', 0)}/{_m.get('total_count', 0)} | "
+                f"화면 로드 소요: {_fetch_elapsed:.1f}s"
+            )
+            _failed_p = [p for p, v in (_m.get("projects") or {}).items()
+                         if isinstance(v, dict) and v.get("status") != "ok"]
+            if _failed_p:
+                st.warning(
+                    f"수집 실패 {len(_failed_p)}건(옛 캐시로 표시 중): "
+                    + ", ".join(_failed_p)
+                )
 
     with cfg_tab2:
         S.section_header("캐시 관리")
-        st.info(f"캐시 TTL: 30분 | 마지막 갱신: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        _m2 = DA.get_refresh_meta()
+        _last2 = _m2.get("last_refresh") if _m2.get("source") != "none" else "(refresh_job 미실행)"
+        st.info(f"데이터 소스: 로컬 캐시(.qms_cache parquet) | 마지막 수집: {_last2}")
         c_btn1, c_btn2 = st.columns(2)
         with c_btn1:
-            if st.button("🗑️ 전체 캐시 초기화", use_container_width=True):
+            # 메모이즈(@st.cache_data)만 비우고 디스크 캐시(parquet)는 보존 → 다음 렌더에서 재읽기.
+            if st.button("♻️ 화면 캐시 새로고침", use_container_width=True):
                 st.cache_data.clear()
                 st.session_state.pop("_cache_fetch_time", None)
-                st.success("캐시 초기화 완료. 페이지를 새로고침하세요.")
+                st.success("화면 캐시를 비웠습니다. 페이지를 새로고침하세요. (디스크 데이터는 유지)")
         with c_btn2:
-            if st.button("↻ 데이터 즉시 갱신", use_container_width=True, type="primary"):
-                st.cache_data.clear()
-                st.session_state.pop("_cache_fetch_time", None)
-                st.rerun()
+            # Task 1.3: 동기 갱신(80s 블로킹) 금지 → refresh_job 백그라운드 트리거.
+            if st.button("↻ 백그라운드 데이터 갱신", use_container_width=True, type="primary"):
+                if _trigger_refresh_job_background():
+                    st.cache_data.clear()
+                    st.info("갱신 시작됨 — 수집 완료 후 새로고침하면 반영됩니다. "
+                            "(정규 갱신은 스케줄러가 담당)")
+                else:
+                    st.warning("갱신 시작 실패 — 스케줄러(Task 1.4) 또는 수동 실행을 사용하세요.")
         st.divider()
         S.section_header("스텝별 수집 소요 시간")
         _st_df = pd.DataFrame(_step_times, columns=["프로젝트", "소요(s)"])
