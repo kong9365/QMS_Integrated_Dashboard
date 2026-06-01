@@ -64,17 +64,31 @@ qms_pro/
 
 ---
 
+### 1.2 기존 중첩 탭 구조 (보존 대상 콘텐츠 — 실측)
+
+현재 11개 상위 탭은 각자 하위탭(일부는 하위하위탭)을 가진다. **모든 탭 공통**으로 `연계 현황`(→ 드로어로 내장) + `원본 데이터`(→ 데이터·설정 ws)를 갖고, 나머지는 도메인 고유 뷰다. Phase 2 재편 시 **고유 뷰의 콘텐츠를 잃지 않는다.** 기존 렌더 함수를 재배치(rebind)할 것.
+
+| 기존 탭 | 하위탭 (★=고유·반드시 보존) | 새 위치(워크스페이스 / sub-view) |
+|--------|------------------------------|-------------------------------|
+| OOS | 현황 / 경향분석 / ★경향분석보고서 / ★마감회의 & GMP / 연계 / 원본 | QC 시험품질 / sub-view(현황·경향·보고서·마감회의·GMP) |
+| 일탈·인시던트 | 개요·KPI / 경향분석 / 원인·유형 / 재발 / 팀별·외주(자사/외주/통합) / 연계 / 원본 | QA 품질운영 / sub-view, 자사·외주는 필터 |
+| 조사 | 개요·KPI / ★5M1E 상세 / 추이·팀별 / 연계 / 원본 | QC 또는 QA(시험실 조사) / sub-view |
+| CAPA | 통합 KPI / CAPA 현황 / Action Item 이행 / 기한·지연 / 연계 / 원본 | 조치·변경 / sub-view |
+| 변경 | 통합 KPI / 등급·구분 / ★영향성평가 / ★외주변경 / Action Item / 연계 / 원본 | 조치·변경 / sub-view |
+| 불만 | 개요·KPI / 유형·처리결과 / 원인·결론 / 처리 성능 / 연계 / 원본 | QA 품질운영 / sub-view |
+
+> **IA 원칙(중요)**: 금지하는 것은 *깊은 2~3단 중첩*이지 sub-view 자체가 아니다. 각 워크스페이스는 **얕은 1단 sub-view**(세그먼트/서브탭)를 가질 수 있고, 이것이 **향후 기능 확장의 표준 메커니즘**이다. `연계`는 드로어로, `원본`은 데이터 ws로 흡수해 공통 항목을 줄인 뒤, 도메인 고유 뷰만 sub-view로 남긴다.
+
 ## 2. 알려진 기술 부채 (Phase 1에서 정리 대상)
 
 | # | 부채 | 위치(분석 시점) | 처리 |
 |---|------|----------------|------|
 | D1 | 중복 정의 — `kpi_gauge`(L298), `render_header`, `render_footer`, `CHART_COLORS` 가 메인과 `qms_styles` 양쪽에 존재 | 메인 파일 | 메인의 중복본 제거, `qms_styles`/`qms_pro` 단일 소스로 통일 |
 | D2 | 다크모드 깨짐 — `dark_mode` 세션(L153)+`S.dark_mode_toggle()`(L480) 있으나 CSS 1회만 주입, 차트 `plot_bgcolor="white"` **29곳** 하드코딩 | 메인 파일 | **라이트 우선** 확정. 깨진 토글 제거 또는 정상화. 차트 배경을 토큰으로 |
-| D3 | 절반짜리 마이그레이션 — `qms_pro/ui/theme.py`·`config/project_meta.py`·`ui/components.py` 가 루트 원본을 가리키는 호환 래퍼 | qms_pro | 실체를 `qms_pro` 안으로 이전하거나, 래퍼 유지를 **명시적 결정**으로 문서화(택1, 단순한 쪽) |
+| D3 | facade 위임 구조 — `qms_pro/ui/theme.py`·`config/project_meta.py`·`ui/components.py` 가 루트 원본에 위임하는 facade | qms_pro | **범위 축소(정정)**: Phase 1에서 전면 마이그레이션 시도 금지(작동 백엔드 불변). D3 = "위임 구조를 `docs/ARCHITECTURE.md`에 문서화 + `theme.py` 등 stale 주석만 정정"으로 한정 |
 | D4 | 취약 CSS/JS — 내부 DOM 속성(`data-testid`,`data-baseweb`) 의존 CSS + `window.parent.document` 조작 JS(사이드바 토글) | qms_styles | parent-document JS **제거**, DOM 의존 CSS 최소화·네이티브 우선 |
 | D5 | 제목 체계 3중 혼재 — raw `####`(×23) / `S.section_header`(×16) / `st.subheader`(×19) | 메인 파일 | `S.section_header` 하나로 통일 |
-| D6 | 레거시 미사용 파일 — `QMS_API.py`,`qms_linkage.py`,`qms_oos_dashboard_panels.py` | 루트 | **삭제하지 말 것.** 미사용 확인만 보고. 제거는 사용자 승인 후 |
-| D7 | 추세선 계산 경고 — `trendline="ols"`(`QMS_Integrated_Dashboard_v2.py` L2686, plotly express → statsmodels 내부)에서 분산≈0 그룹 시 `divide by zero encountered in scalar divide` RuntimeWarning. **무해**(화면/수치 영향 없음, Task 0.1 기동 시 콘솔 에러 0건) | 메인 파일 L2686 | Phase 1 검토 후보. 정리 시 분산 0 그룹 가드 또는 경고 억제 |
+| D6 | 현역 백엔드(메인 직접 import 안 함) — `QMS_API.py`,`qms_linkage.py`,`qms_oos_dashboard_panels.py` | 루트 | **정정**: '미사용'이 아니라 `qms_pro` 래퍼가 전이적으로 import하는 **현역 백엔드**. **삭제·이동 금지.** (`qms_client.py`→QMS_API, `domain/linkage.py`→qms_linkage, `pages/oos_panels.py`→qms_oos_dashboard_panels) |
 
 ---
 
@@ -187,6 +201,13 @@ qms_pro/
 ### Phase 2 — 정보구조(IA) 재편 (7 워크스페이스)
 
 > 확정 IA: 7 워크스페이스 · **단일 구조 + 역할 필터(QC/QA)** · 연계 드릴다운 전 화면 내장 · 종결점검 분산+종합요약. (IA 맵 HTML 참조)
+> **sub-view 원칙**: 각 워크스페이스는 얕은 1단 sub-view(세그먼트/서브탭)를 갖는다(§1.2 매핑 표). 깊은 중첩만 금지. 기존 고유 뷰(예: OOS 경향분석보고서·마감회의&GMP, 조사 5M1E)는 손실 없이 sub-view로 보존하고, 향후 확장도 sub-view 추가로 처리.
+
+**Task 2.0 — 기존 콘텐츠 인벤토리 & 매핑 (재편 전 필수 선행)**
+- 목적: 재편 과정에서 기존 sub-tab/sub-sub-tab 콘텐츠가 **silently 누락되지 않게** 한다.
+- 작업: 현재 11개 탭의 모든 하위탭 렌더 함수를 코드에서 추출해, §1.2 표를 **실제 함수명까지** 채운 매핑 문서(`docs/CONTENT_MAP.md`)를 작성. 각 항목에 [보존→새 sub-view] / [드로어로 흡수] / [데이터 ws로 이동] / [폐기(사유)] 중 하나를 명시. 폐기는 사용자 승인 없이는 금지.
+- 완료 기준: 모든 기존 하위탭이 매핑 표에 1:1로 존재(누락 0). 보존 대상(★ 포함)이 어느 워크스페이스 sub-view로 가는지 확정.
+- 주의: 이 단계는 분석·문서화만. 코드 변경 없음.
 
 **Task 2.1 — 좌측 워크스페이스 레일 (11탭 → 7)**
 - 작업: 기존 11개 상단 탭을 7 워크스페이스로 재편: `종합현황 · QC 시험품질 · QA 품질운영 · 조치·변경 · 제품·배치품질(신설) · 알림·모니터링(신설) · 데이터·설정`. 좌측 아이콘 레일은 `streamlit-option-menu`로 구현(requirements 추가, 버전 핀). 기존 탭의 콘텐츠 함수는 재사용·재배치(로직 보존).
@@ -281,6 +302,7 @@ qms_pro/
 4. **연계 드릴다운 드로어** — `st.dialog`, 체인 흐름+종결 여부, 전 화면 호출.
 5. **신호/빈 상태 카드** — 이상신호·기한위험·데이터 없음.
 6. **좌측 레일 / 글로벌 필터바 / 역할 토글** — `streamlit-option-menu` / `st.columns` / `st.segmented_control`.
+7. **워크스페이스 sub-view** — 얕은 1단 세그먼트/서브탭(`st.segmented_control` 또는 1단 `st.tabs`). 도메인 고유 뷰 보존 + 향후 기능 확장의 표준 자리. 그 안에서 3단 위계 적용. 2단 이상 중첩 금지.
 
 ---
 
