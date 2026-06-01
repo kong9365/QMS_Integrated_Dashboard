@@ -306,9 +306,7 @@ def _to_excel_safe_df(df: pd.DataFrame) -> pd.DataFrame:
 
 # [Task 1.5 D1] render_header/render_footer 중복 래퍼 제거 — qms_styles 단일 소스를
 # S.render_header / S.render_footer 로 직접 호출(아래 모든 호출부를 S. 접두로 통일).
-def kpi_gauge(value, target, title, suffix="%", inverse=False):
-    """개선된 반원 게이지 차트 (qms_styles 위임)."""
-    return S.kpi_gauge_improved(value, target, title, suffix=suffix, inverse=inverse)
+# [Task 1.6 commit5] kpi_gauge(반원 게이지) 제거 → 경영진 화면은 S.kpi_stat_card(진척 바) 사용.
 
 
 def render_analyst_error_reduction_kpi(
@@ -1481,7 +1479,7 @@ def render_event_category_tab(
                         text=[int(v) for v in piv[col].tolist()],
                         textposition="top center",
                         name=str(col),
-                        line=dict(color=color_map.get(str(col), "#636efa"), width=2),
+                        line=dict(color=color_map.get(str(col), CHART_COLORS["blue"]), width=2),
                         marker=dict(size=7),
                     ))
                 fig_m.update_layout(height=320, plot_bgcolor=S.CHART_SURFACE,
@@ -1754,12 +1752,13 @@ with tab_exec:
             foos, ALL_DFS.get("oos", pd.DataFrame()), primary_year, prev_year, year_col=YEAR_FILTER_COL
         )
     with g2:
-        st.plotly_chart(kpi_gauge(capa_rate, 90, "CAPA 이행률"), use_container_width=True)
+        # 진척 바 KPI 스탯 카드(반원 게이지 대체). 전년 델타는 이 지표들엔 미계산 → 생략.
+        S.kpi_stat_card(capa_rate, 90, "CAPA 이행률")
     with g3:
-        st.plotly_chart(kpi_gauge(change_rate, 85, "변경 완료율"), use_container_width=True)
+        S.kpi_stat_card(change_rate, 85, "변경 완료율")
     with g4:
         val = avg_complaint_days if avg_complaint_days is not None else 0
-        st.plotly_chart(kpi_gauge(val, 30, "불만 평균처리일", suffix="일", inverse=True), use_container_width=True)
+        S.kpi_stat_card(val, 30, "불만 평균처리일", suffix="일", inverse=True)
 
     st.divider()
 
@@ -2074,7 +2073,7 @@ with tab_inv:
                 m1e_data["항목"] = m1e_data["항목"].str.replace("5M1E_", "")
                 fig_m1e = px.bar(m1e_data.sort_values("수행 건수", ascending=True),
                                  x="수행 건수", y="항목", orientation="h",
-                                 color_discrete_sequence=["#795548"], text="수행 건수")
+                                 color_discrete_sequence=[CHART_COLORS["blue"]], text="수행 건수")
                 fig_m1e.update_layout(height=300, margin=dict(l=0, r=20, t=10, b=10),
                                        plot_bgcolor=S.CHART_SURFACE)
                 fig_m1e.update_traces(textposition="outside")
@@ -2675,7 +2674,7 @@ with tab_workflow:
         fig_sk = go.Figure(go.Sankey(
             node=dict(pad=15, thickness=20,
                       label=[f"OOS ({oos_total})", f"일탈 ({dev_total})", f"조사 ({inv_cnt})", f"CAPA ({capa_cnt})", f"CAPA AI ({cai_cnt})"],
-                      color=["#e53935", "#fb8c00", "#795548", "#8e24aa", "#ab47bc"]),
+                      color=CHART_SEQUENCE[:5]),   # 토큰 시퀀스(네이비→블루→틸) — 혼용색 폐지
             link=dict(
                 source=[0, 1, 0, 1, 3],
                 target=[2, 2, 3, 3, 4],

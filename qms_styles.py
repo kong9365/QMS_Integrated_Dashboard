@@ -426,63 +426,63 @@ def metric_with_sparkline(
     """, unsafe_allow_html=True)
 
 
-def kpi_gauge_improved(value: float, target: float, title: str, suffix: str = "%", inverse: bool = False):
-    """세련된 반원 게이지 차트 반환 (Plotly Figure)."""
-    import plotly.graph_objects as go
+def kpi_stat_card(
+    value: float,
+    target: float,
+    title: str,
+    suffix: str = "%",
+    inverse: bool = False,
+    delta: str | None = None,
+    max_val: float | None = None,
+) -> None:
+    """[Task 1.6] 목표 마커 진척 바 KPI 스탯 카드 (반원 게이지 대체).
 
-    if inverse:
-        color = GREEN if value <= target else (RED if value > target * 1.5 else YELLOW)
-    else:
-        color = GREEN if value >= target else (RED if value < target * 0.7 else YELLOW)
-
-    max_val = max(100, target * 1.5, value * 1.2) if not inverse else max(target * 2, value * 1.5, 60)
+    라벨 · 큰 수치(tnum) · 목표 마커가 있는 진척 바 · 좌측 의미색 강조.
+    - inverse=False: 값이 target 이상이면 달성(정상=초록). 미달 시 주의/위험.
+    - inverse=True : 값이 target 이하이면 달성(예: 평균처리일 — 낮을수록 좋음).
+    - delta: 전년대비 등 사전 계산된 문자열이 있으면 표기, 없으면 생략(임의 생성 금지).
+    """
     T = _theme()
+    # 달성 판정 → 의미색(좌측 강조 + 바 색)
+    if inverse:
+        ok = value <= target
+        color = SEM_OK if ok else (SEM_DANGER if value > target * 1.5 else SEM_WARN)
+    else:
+        ok = value >= target
+        color = SEM_OK if ok else (SEM_DANGER if value < target * 0.7 else SEM_WARN)
 
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number+delta",
-        value=value,
-        delta={
-            "reference": target,
-            "valueformat": ".1f",
-            "increasing": {"color": GREEN if not inverse else RED},
-            "decreasing": {"color": RED if not inverse else GREEN},
-            "font": {"size": 11},
-        },
-        number={"suffix": suffix, "font": {"size": 28, "color": color}},
-        title={"text": title, "font": {"size": 12, "color": T["text"]}},
-        gauge={
-            "axis": {
-                "range": [0, max_val],
-                "tickfont": {"size": 9, "color": T["sub_text"]},
-                "tickcolor": T["border"],
-                "nticks": 5,
-            },
-            "bar": {"color": color, "thickness": 0.65},
-            "bgcolor": T["card_bg"],
-            "borderwidth": 0,
-            "steps": [
-                {"range": [0, max_val * 0.5],
-                 "color": "#ffebee" if not inverse else "#e8f5e9"},
-                {"range": [max_val * 0.5, max_val * 0.8],
-                 "color": "#fff8e1"},
-                {"range": [max_val * 0.8, max_val],
-                 "color": "#e8f5e9" if not inverse else "#ffebee"},
-            ],
-            "threshold": {
-                "line": {"color": "#333", "width": 2},
-                "value": target,
-                "thickness": 0.85,
-            },
-            "shape": "angular",
-        },
-    ))
-    fig.update_layout(
-        height=210,
-        margin=dict(l=20, r=20, t=45, b=10),
-        paper_bgcolor=T["bg"],
-        font={"color": T["text"]},
-    )
-    return fig
+    # 진척 바 스케일: 기본은 100 또는 목표/값 기준. 진행률(%)·목표 마커 위치(%) 계산.
+    scale = max_val if max_val is not None else (max(100.0, target * 1.3, value * 1.1) if not inverse else max(target * 2, value * 1.2, 1))
+    scale = scale or 1
+    pct = max(0.0, min(100.0, value / scale * 100.0))
+    target_pct = max(0.0, min(100.0, target / scale * 100.0))
+
+    delta_html = ""
+    if delta:
+        d_color = SEM_OK if (delta.startswith("+") or "↑" in delta) else SEM_DANGER
+        delta_html = f'<span class="qms-num" style="font-size:0.78rem;color:{d_color};font-weight:600">{delta}</span>'
+
+    st.markdown(f"""
+    <div style="
+        background:{T['card_bg']};
+        border-radius:12px;
+        padding:14px 16px;
+        border-left:5px solid {color};
+        box-shadow:0 2px 8px rgba(0,0,0,0.06);
+        display:flex; flex-direction:column; gap:8px;
+    ">
+        <span style="font-size:0.78rem;color:{T['sub_text']};font-weight:600;letter-spacing:0.3px">{title}</span>
+        <div style="display:flex;align-items:baseline;gap:8px">
+            <span class="qms-num" style="font-size:1.9rem;font-weight:700;color:{T['text']};line-height:1">{value:g}{suffix}</span>
+            {delta_html}
+        </div>
+        <div style="position:relative;height:9px;border-radius:6px;background:#e9edf5;overflow:visible">
+            <div style="position:absolute;left:0;top:0;height:9px;border-radius:6px;width:{pct:.1f}%;background:{color}"></div>
+            <div title="목표 {target:g}{suffix}" style="position:absolute;left:{target_pct:.1f}%;top:-3px;width:2px;height:15px;background:{NAVY_900}"></div>
+        </div>
+        <span class="qms-num" style="font-size:0.72rem;color:{T['sub_text']}">목표 {target:g}{suffix}</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def filter_reset_button(key: str = "filter_reset") -> bool:
