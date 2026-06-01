@@ -90,7 +90,7 @@ def apply_global_css() -> None:
        있을 수 있어 display:none 이면 토글이 완전히 사라짐 (로컬 넓은 창에서는 펼쳐진 채로만 써서 문제 없음). */
     [data-testid="stDecoration"] {{ display: none !important; }}
 
-    /* 사이드바 토글은 inject_sidebar_toggle() 단일 버튼으로만 처리 (네이티브는 JS에서 숨김). */
+    /* 사이드바 토글은 Streamlit 네이티브 컨트롤을 그대로 사용(Task 1.5 D4: 커스텀 JS 제거). */
 
     .stApp [data-testid="stMain"] .block-container {{
         padding-top: 1rem !important;
@@ -318,160 +318,14 @@ def empty_state(message: str, icon: str = "📭") -> None:
 
 
 def inject_sidebar_toggle() -> None:
+    """[Task 1.5 D4] 사이드바 토글은 Streamlit 네이티브 컨트롤을 그대로 사용한다.
+
+    이전 구현은 부모 문서(parent document)를 직접 조작해 네이티브 토글을 숨기고 커스텀
+    버튼(#qms-sb-toggle)을 주입했다. 이 부모문서 조작 JS 는 Streamlit 내부 DOM(data-testid)에
+    강하게 의존해 버전 업 시 깨지기 쉬우므로 제거했다.
+    호출부 호환을 위해 함수는 no-op 로 남긴다(네이티브 접기/펼치기 버튼이 동작).
     """
-    Streamlit 네이티브 토글(좌/우 분리 렌더)을 숨기고 #qms-sb-toggle 하나로 접기/펼치기.
-    펼침 시 사이드바 오른쪽 경계 근처, 접힘 시 왼쪽 끝. 열림 판별은 data-testid=stSidebarCollapseButton 유무.
-    """
-    import streamlit.components.v1 as components
-    components.html(r"""
-<script>
-(function () {
-  'use strict';
-  var P = window.parent.document;
-
-  function injectCSS() {
-    if (P.getElementById('qms-sb-css')) return;
-    var s = P.createElement('style');
-    s.id = 'qms-sb-css';
-    s.textContent = [
-      '[data-testid="collapsedControl"],',
-      '[data-testid="stSidebarCollapsedControl"],',
-      '[data-testid="stSidebarCollapseButton"] {',
-      '  position: fixed !important;',
-      '  left: -99999px !important;',
-      '  top: 0 !important;',
-      '  opacity: 0 !important;',
-      '  pointer-events: auto !important;',
-      '}',
-      '#qms-sb-toggle {',
-      '  position: fixed;',
-      '  top: 50vh;',
-      '  left: 0;',
-      '  transform: translateY(-50%);',
-      '  z-index: 10000001;',
-      '  box-sizing: border-box;',
-      '  width: 36px;',
-      '  height: 72px;',
-      '  margin: 0;',
-      '  padding: 0;',
-      '  border: 2px solid #ffffff;',
-      '  outline: 1px solid rgba(63,81,181,0.55);',
-      '  border-radius: 0 12px 12px 0;',
-      '  background: linear-gradient(180deg,#7e8eed 0%,#5c6bc0 35%,#3949ab 100%);',
-      '  color: #ffffff;',
-      '  cursor: pointer;',
-      '  display: flex;',
-      '  align-items: center;',
-      '  justify-content: center;',
-      '  font-size: 17px;',
-      '  font-weight: 700;',
-      '  line-height: 1;',
-      '  user-select: none;',
-      '  box-shadow: 0 0 0 2px rgba(255,255,255,0.85), 4px 2px 18px rgba(13,27,62,0.45);',
-      '  transition: left .26s cubic-bezier(.4,0,.2,1), background .18s;',
-      '  filter: saturate(1.06);',
-      '}',
-      '#qms-sb-toggle:hover {',
-      '  background: linear-gradient(180deg,#9fa8da 0%,#7e8eed 50%,#5c6bc0 100%);',
-      '}',
-      '#qms-sb-toggle:active {',
-      '  background: linear-gradient(180deg,#3949ab 0%,#303f9f 100%);',
-      '}',
-    ].join('\n');
-    P.head.appendChild(s);
-  }
-
-    function initToggle() {
-    injectCSS();
-    if (P.getElementById('qms-sb-toggle')) return;
-
-    var btn = P.createElement('button');
-    btn.id = 'qms-sb-toggle';
-    btn.type = 'button';
-    btn.setAttribute('aria-label', '사이드바 접기 · 펼치기');
-    P.body.appendChild(btn);
-
-    function getSB() { return P.querySelector('[data-testid="stSidebar"]'); }
-
-    function isOpen() {
-      return !!P.querySelector('[data-testid="stSidebarCollapseButton"]');
-    }
-
-    function targetNative() {
-      return P.querySelector('[data-testid="stSidebarCollapseButton"] button') ||
-        P.querySelector('[data-testid="collapsedControl"] button') ||
-        P.querySelector('[data-testid="stSidebarCollapsedControl"] button');
-    }
-
-    var _updating = false;
-    function update() {
-      if (_updating) return;
-      _updating = true;
-      try {
-        var open = isOpen();
-        var sb = getSB();
-        if (open && sb) {
-          var r = sb.getBoundingClientRect();
-          btn.style.left = Math.max(0, Math.round(r.right) - 20) + 'px';
-        } else {
-          btn.style.left = '0px';
-        }
-        btn.textContent = open ? '\u2039' : '\u203a';
-        btn.title = open ? '사이드바 접기' : '사이드바 펼치기';
-      } finally {
-        _updating = false;
-      }
-    }
-
-    var _deb = null;
-    function scheduleUpdate() {
-      if (_deb) return;
-      _deb = setTimeout(function () {
-        _deb = null;
-        update();
-      }, 150);
-    }
-
-    btn.addEventListener('click', function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      var h = targetNative();
-      if (h) { h.click(); }
-      setTimeout(scheduleUpdate, 400);
-    });
-
-    if (window.qmsSbIntervalId) { clearInterval(window.qmsSbIntervalId); }
-    window.qmsSbIntervalId = setInterval(scheduleUpdate, 1200);
-
-    function attachSidebarObserver() {
-      var sb = getSB();
-      if (!sb || window.qmsSbToggleObserver) return;
-      window.qmsSbToggleObserver = new MutationObserver(scheduleUpdate);
-      window.qmsSbToggleObserver.observe(sb, { childList: true, subtree: true, attributes: false });
-    }
-    attachSidebarObserver();
-    if (!window.qmsSbResizeBound) {
-      window.qmsSbResizeBound = true;
-      window.addEventListener('resize', scheduleUpdate);
-    }
-    scheduleUpdate();
-  }
-
-  function tryInit() {
-    if (P.querySelector('[data-testid="stSidebar"]')) {
-      initToggle();
-    } else {
-      setTimeout(tryInit, 180);
-    }
-  }
-  tryInit();
-
-  setInterval(function () {
-    if (!P.getElementById('qms-sb-toggle')) { tryInit(); }
-  }, 4000);
-})();
-</script>
-""", height=0, scrolling=False)
+    return None
 
 
 def dark_mode_toggle() -> None:
