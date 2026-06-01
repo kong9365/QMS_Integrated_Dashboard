@@ -95,8 +95,9 @@ _LIGHT = {
 
 
 def _theme() -> dict:
-    dark = st.session_state.get("dark_mode", False)
-    return _DARK if dark else _LIGHT
+    # [Task 1.6 D2] 라이트 우선 확정 — 다크모드 제거. 항상 _LIGHT 반환.
+    # (_DARK 는 보존하되 미사용. T['...'] 참조는 전부 라이트 값으로 해석되어 시각 동일.)
+    return _LIGHT
 
 
 def apply_global_css() -> None:
@@ -156,7 +157,7 @@ def apply_global_css() -> None:
         font-size: 1rem;
         font-weight: 700;
         color: {T['text']};
-        background: {'rgba(63,81,181,0.06)' if not st.session_state.get('dark_mode') else 'rgba(63,81,181,0.12)'};
+        background: rgba(63,81,181,0.06);
         border-radius: 0 6px 6px 0;
     }}
 
@@ -166,7 +167,7 @@ def apply_global_css() -> None:
         border-radius: 10px;
         padding: 14px 18px;
         border-left: 4px solid {ACCENT};
-        box-shadow: 0 2px 8px rgba(0,0,0,{'0.10' if st.session_state.get('dark_mode') else '0.06'});
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
         transition: box-shadow .18s;
     }}
     div[data-testid="stMetric"]:hover {{
@@ -241,8 +242,8 @@ def apply_global_css() -> None:
 
     /* ─── 하이라이트 박스 ───────────────────────────────── */
     .qms-highlight {{
-        background: {'#fff3cd' if not st.session_state.get('dark_mode') else '#2d2600'};
-        border: 1px solid {'#ffc107' if not st.session_state.get('dark_mode') else '#6d5500'};
+        background: #fff3cd;
+        border: 1px solid #ffc107;
         border-radius: 8px;
         padding: 10px 14px;
         margin-top: 8px;
@@ -285,7 +286,7 @@ def apply_global_css() -> None:
 
     /* ─── 사이드바 ──────────────────────────────────────── */
     [data-testid="stSidebar"] {{
-        background: {'#f3f4f8' if not st.session_state.get('dark_mode') else '#131625'} !important;
+        background: #f3f4f8 !important;
     }}
     [data-testid="stSidebar"] .stButton button {{
         border-radius: 8px;
@@ -365,13 +366,11 @@ def inject_sidebar_toggle() -> None:
 
 
 def dark_mode_toggle() -> None:
-    """사이드바 다크모드 토글. apply_global_css() 이전에 세션 상태만 변경."""
-    if "dark_mode" not in st.session_state:
-        st.session_state["dark_mode"] = False
-    icon = "☀️ 라이트 모드" if st.session_state["dark_mode"] else "🌙 다크 모드"
-    if st.sidebar.button(icon, use_container_width=True, key="_dark_toggle"):
-        st.session_state["dark_mode"] = not st.session_state["dark_mode"]
-        st.rerun()
+    """[Task 1.6 D2] 라이트 우선 확정 — 다크모드 토글 제거(깨진 토글이었음).
+
+    호출부 호환을 위해 함수는 no-op 로 남긴다. 사이드바에 토글 버튼을 더 이상 그리지 않는다.
+    """
+    return None
 
 
 def sparkline_html(values: list[float], color: str = "#3f51b5", height: int = 32, width: int = 80) -> str:
