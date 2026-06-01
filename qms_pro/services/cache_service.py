@@ -22,9 +22,15 @@ from qms_disk_cache import (
     save as _save,
     clear as _clear,
     stats as _stats,
+    cache_dir as _cache_dir,
 )
 
-__all__ = ["load", "save", "clear", "stats", "DISK_TTL"]
+__all__ = ["load", "save", "clear", "stats", "cache_dir", "DISK_TTL"]
+
+
+def cache_dir() -> str:
+    """디스크 캐시 디렉터리 절대경로(원본 위임)."""
+    return _cache_dir()
 
 
 def load(key: str, ttl: int | None = None) -> tuple[pd.DataFrame, str | None] | None:

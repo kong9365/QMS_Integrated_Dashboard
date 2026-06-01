@@ -4,7 +4,7 @@
 목적
 ----
 대시보드/oos_panels 에 반복되는 Plotly 보일러플레이트
-``fig.update_layout(height=.., margin=dict(l=..,r=..,t=..,b=..), plot_bgcolor="white", ...)``
+``fig.update_layout(height=.., margin=dict(...), plot_bgcolor=<surface 토큰>, ...)``
 + ``st.plotly_chart(fig, use_container_width=True, key=..)`` 를 한 곳으로 모은다.
 
 설계 원칙 (시각 동일 보존)
@@ -22,6 +22,9 @@ from __future__ import annotations
 from typing import Any, Mapping, Sequence
 
 import streamlit as st
+
+# 차트 배경/그리드 토큰(qms_styles 단일정의 재노출) — 순백 배경 치환용(Task 1.6).
+from qms_styles import CHART_SURFACE, CHART_GRID
 
 # 자주 반복되는 마진 (l, r, t, b). 강제값 아님 — 호출부 가독성용.
 MARGIN_TIGHT = (10, 10, 10, 10)   # 대시보드에서 가장 흔한 값(28+회)

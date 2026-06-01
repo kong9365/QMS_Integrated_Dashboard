@@ -11,19 +11,46 @@ S.empty_state(...)
 
 import streamlit as st
 
-# ─── 색상 토큰 ────────────────────────────────────────────────────────────────
+# ─── 디자인 토큰 (단일 정의 — Task 1.6) ──────────────────────────────────────
+# 사양서 §7 토큰. 기존 상수명(PRIMARY/ACCENT/GREEN…)은 호환을 위해 새 토큰의 별칭으로 유지.
 
-PRIMARY   = "#0d1b3e"
-PRIMARY_L = "#1a3a6c"
-ACCENT    = "#3f51b5"
+# 구조색(Navy)
+NAVY_900 = "#0B1530"
+NAVY_800 = "#0E1B3D"
+NAVY_700 = "#16244F"
+NAVY_600 = "#213164"
+NAVY_400 = "#6B79A6"
+ACCENT_BLUE = "#2F54D6"   # Accent
+
+# 의미색(고정) — 상태 매핑 단일 출처
+SEM_DANGER  = "#D7263D"   # 위험 = 초과/미종결
+SEM_WARN    = "#E8830C"   # 주의 = 임박(D-3)
+SEM_OK      = "#1F9D63"   # 정상 = 완료/달성
+SEM_INFO    = "#2F6FED"   # 정보 = 진행/정보
+SEM_LINK    = "#0E9AA7"   # 연계 = 연계/개선 (teal)
+SEM_NEUTRAL = "#7A88A8"   # 중립 = 비활성
+
+# ── 기존 상수명 별칭(하위호환; 값은 새 토큰으로 매핑) ──
+PRIMARY   = NAVY_800       # 구조 기본
+PRIMARY_L = NAVY_600
+ACCENT    = ACCENT_BLUE
 LIGHT_BG  = "#f8f9fa"
 BORDER    = "#e0e0e0"
+GREEN  = SEM_OK
+YELLOW = SEM_WARN
+RED    = SEM_DANGER
+ORANGE = SEM_WARN
 
-# 상태 색상
-GREEN  = "#27ae60"
-YELLOW = "#f39c12"
-RED    = "#e74c3c"
-ORANGE = "#fb8c00"
+# 차트 시퀀스(네이비→블루→틸) — 12종 혼용 폐지(D1 잔여, 단일화는 commit 2에서 적용)
+CHART_SEQUENCE = [NAVY_800, ACCENT_BLUE, "#3D6AD6", "#5C8AE0", SEM_LINK, NAVY_400, "#2B8FA8", "#8FA0C8"]
+
+# 차트 배경(plot area) — 라이트 우선. 순백 대신 토큰 surface(미세 톤)로 통일.
+CHART_SURFACE = "#FCFDFF"
+CHART_GRID    = "#EAEEF6"
+
+# 타이포: 수치/관리번호/D-day 는 mono + tabular-nums (CSS 클래스 .qms-num)
+FONT_BODY = "Pretendard, -apple-system, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif"
+FONT_MONO = "'JetBrains Mono', 'Roboto Mono', 'Consolas', ui-monospace, monospace"
 
 # 차트 팔레트
 CHART_COLORS = {
@@ -68,15 +95,25 @@ _LIGHT = {
 
 
 def _theme() -> dict:
-    dark = st.session_state.get("dark_mode", False)
-    return _DARK if dark else _LIGHT
+    # [Task 1.6 D2] 라이트 우선 확정 — 다크모드 제거. 항상 _LIGHT 반환.
+    # (_DARK 는 보존하되 미사용. T['...'] 참조는 전부 라이트 값으로 해석되어 시각 동일.)
+    return _LIGHT
 
 
 def apply_global_css() -> None:
     """앱 시작 시 1회 호출. 전체 CSS 주입."""
     T = _theme()
+    # Pretendard 본문 폰트 — 사내망 CDN 차단 시 시스템폰트로 자동 폴백(로컬 번들은 후속 과제).
+    st.markdown(
+        '<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@1.3.9/dist/web/static/pretendard.min.css">',
+        unsafe_allow_html=True,
+    )
     st.markdown(f"""
 <style>
+    /* ─── 타이포 토큰 (Task 1.6) ─────────────────────────── */
+    html, body, [class*="st-"], .stApp {{ font-family: {FONT_BODY}; }}
+    /* 수치/관리번호/D-day: mono + tabular-nums (정렬·자릿수 안정) */
+    .qms-num, .qms-num * {{ font-family: {FONT_MONO}; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
     /* ─── 기본 리셋 ─────────────────────────────────────── */
     #MainMenu {{ visibility: hidden; }}
     footer {{ visibility: hidden; }}
@@ -90,7 +127,7 @@ def apply_global_css() -> None:
        있을 수 있어 display:none 이면 토글이 완전히 사라짐 (로컬 넓은 창에서는 펼쳐진 채로만 써서 문제 없음). */
     [data-testid="stDecoration"] {{ display: none !important; }}
 
-    /* 사이드바 토글은 inject_sidebar_toggle() 단일 버튼으로만 처리 (네이티브는 JS에서 숨김). */
+    /* 사이드바 토글은 Streamlit 네이티브 컨트롤을 그대로 사용(Task 1.5 D4: 커스텀 JS 제거). */
 
     .stApp [data-testid="stMain"] .block-container {{
         padding-top: 1rem !important;
@@ -120,7 +157,7 @@ def apply_global_css() -> None:
         font-size: 1rem;
         font-weight: 700;
         color: {T['text']};
-        background: {'rgba(63,81,181,0.06)' if not st.session_state.get('dark_mode') else 'rgba(63,81,181,0.12)'};
+        background: rgba(63,81,181,0.06);
         border-radius: 0 6px 6px 0;
     }}
 
@@ -130,7 +167,7 @@ def apply_global_css() -> None:
         border-radius: 10px;
         padding: 14px 18px;
         border-left: 4px solid {ACCENT};
-        box-shadow: 0 2px 8px rgba(0,0,0,{'0.10' if st.session_state.get('dark_mode') else '0.06'});
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
         transition: box-shadow .18s;
     }}
     div[data-testid="stMetric"]:hover {{
@@ -205,8 +242,8 @@ def apply_global_css() -> None:
 
     /* ─── 하이라이트 박스 ───────────────────────────────── */
     .qms-highlight {{
-        background: {'#fff3cd' if not st.session_state.get('dark_mode') else '#2d2600'};
-        border: 1px solid {'#ffc107' if not st.session_state.get('dark_mode') else '#6d5500'};
+        background: #fff3cd;
+        border: 1px solid #ffc107;
         border-radius: 8px;
         padding: 10px 14px;
         margin-top: 8px;
@@ -249,7 +286,7 @@ def apply_global_css() -> None:
 
     /* ─── 사이드바 ──────────────────────────────────────── */
     [data-testid="stSidebar"] {{
-        background: {'#f3f4f8' if not st.session_state.get('dark_mode') else '#131625'} !important;
+        background: #f3f4f8 !important;
     }}
     [data-testid="stSidebar"] .stButton button {{
         border-radius: 8px;
@@ -318,170 +355,22 @@ def empty_state(message: str, icon: str = "📭") -> None:
 
 
 def inject_sidebar_toggle() -> None:
+    """[Task 1.5 D4] 사이드바 토글은 Streamlit 네이티브 컨트롤을 그대로 사용한다.
+
+    이전 구현은 부모 문서(parent document)를 직접 조작해 네이티브 토글을 숨기고 커스텀
+    버튼(#qms-sb-toggle)을 주입했다. 이 부모문서 조작 JS 는 Streamlit 내부 DOM(data-testid)에
+    강하게 의존해 버전 업 시 깨지기 쉬우므로 제거했다.
+    호출부 호환을 위해 함수는 no-op 로 남긴다(네이티브 접기/펼치기 버튼이 동작).
     """
-    Streamlit 네이티브 토글(좌/우 분리 렌더)을 숨기고 #qms-sb-toggle 하나로 접기/펼치기.
-    펼침 시 사이드바 오른쪽 경계 근처, 접힘 시 왼쪽 끝. 열림 판별은 data-testid=stSidebarCollapseButton 유무.
-    """
-    import streamlit.components.v1 as components
-    components.html(r"""
-<script>
-(function () {
-  'use strict';
-  var P = window.parent.document;
-
-  function injectCSS() {
-    if (P.getElementById('qms-sb-css')) return;
-    var s = P.createElement('style');
-    s.id = 'qms-sb-css';
-    s.textContent = [
-      '[data-testid="collapsedControl"],',
-      '[data-testid="stSidebarCollapsedControl"],',
-      '[data-testid="stSidebarCollapseButton"] {',
-      '  position: fixed !important;',
-      '  left: -99999px !important;',
-      '  top: 0 !important;',
-      '  opacity: 0 !important;',
-      '  pointer-events: auto !important;',
-      '}',
-      '#qms-sb-toggle {',
-      '  position: fixed;',
-      '  top: 50vh;',
-      '  left: 0;',
-      '  transform: translateY(-50%);',
-      '  z-index: 10000001;',
-      '  box-sizing: border-box;',
-      '  width: 36px;',
-      '  height: 72px;',
-      '  margin: 0;',
-      '  padding: 0;',
-      '  border: 2px solid #ffffff;',
-      '  outline: 1px solid rgba(63,81,181,0.55);',
-      '  border-radius: 0 12px 12px 0;',
-      '  background: linear-gradient(180deg,#7e8eed 0%,#5c6bc0 35%,#3949ab 100%);',
-      '  color: #ffffff;',
-      '  cursor: pointer;',
-      '  display: flex;',
-      '  align-items: center;',
-      '  justify-content: center;',
-      '  font-size: 17px;',
-      '  font-weight: 700;',
-      '  line-height: 1;',
-      '  user-select: none;',
-      '  box-shadow: 0 0 0 2px rgba(255,255,255,0.85), 4px 2px 18px rgba(13,27,62,0.45);',
-      '  transition: left .26s cubic-bezier(.4,0,.2,1), background .18s;',
-      '  filter: saturate(1.06);',
-      '}',
-      '#qms-sb-toggle:hover {',
-      '  background: linear-gradient(180deg,#9fa8da 0%,#7e8eed 50%,#5c6bc0 100%);',
-      '}',
-      '#qms-sb-toggle:active {',
-      '  background: linear-gradient(180deg,#3949ab 0%,#303f9f 100%);',
-      '}',
-    ].join('\n');
-    P.head.appendChild(s);
-  }
-
-    function initToggle() {
-    injectCSS();
-    if (P.getElementById('qms-sb-toggle')) return;
-
-    var btn = P.createElement('button');
-    btn.id = 'qms-sb-toggle';
-    btn.type = 'button';
-    btn.setAttribute('aria-label', '사이드바 접기 · 펼치기');
-    P.body.appendChild(btn);
-
-    function getSB() { return P.querySelector('[data-testid="stSidebar"]'); }
-
-    function isOpen() {
-      return !!P.querySelector('[data-testid="stSidebarCollapseButton"]');
-    }
-
-    function targetNative() {
-      return P.querySelector('[data-testid="stSidebarCollapseButton"] button') ||
-        P.querySelector('[data-testid="collapsedControl"] button') ||
-        P.querySelector('[data-testid="stSidebarCollapsedControl"] button');
-    }
-
-    var _updating = false;
-    function update() {
-      if (_updating) return;
-      _updating = true;
-      try {
-        var open = isOpen();
-        var sb = getSB();
-        if (open && sb) {
-          var r = sb.getBoundingClientRect();
-          btn.style.left = Math.max(0, Math.round(r.right) - 20) + 'px';
-        } else {
-          btn.style.left = '0px';
-        }
-        btn.textContent = open ? '\u2039' : '\u203a';
-        btn.title = open ? '사이드바 접기' : '사이드바 펼치기';
-      } finally {
-        _updating = false;
-      }
-    }
-
-    var _deb = null;
-    function scheduleUpdate() {
-      if (_deb) return;
-      _deb = setTimeout(function () {
-        _deb = null;
-        update();
-      }, 150);
-    }
-
-    btn.addEventListener('click', function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      var h = targetNative();
-      if (h) { h.click(); }
-      setTimeout(scheduleUpdate, 400);
-    });
-
-    if (window.qmsSbIntervalId) { clearInterval(window.qmsSbIntervalId); }
-    window.qmsSbIntervalId = setInterval(scheduleUpdate, 1200);
-
-    function attachSidebarObserver() {
-      var sb = getSB();
-      if (!sb || window.qmsSbToggleObserver) return;
-      window.qmsSbToggleObserver = new MutationObserver(scheduleUpdate);
-      window.qmsSbToggleObserver.observe(sb, { childList: true, subtree: true, attributes: false });
-    }
-    attachSidebarObserver();
-    if (!window.qmsSbResizeBound) {
-      window.qmsSbResizeBound = true;
-      window.addEventListener('resize', scheduleUpdate);
-    }
-    scheduleUpdate();
-  }
-
-  function tryInit() {
-    if (P.querySelector('[data-testid="stSidebar"]')) {
-      initToggle();
-    } else {
-      setTimeout(tryInit, 180);
-    }
-  }
-  tryInit();
-
-  setInterval(function () {
-    if (!P.getElementById('qms-sb-toggle')) { tryInit(); }
-  }, 4000);
-})();
-</script>
-""", height=0, scrolling=False)
+    return None
 
 
 def dark_mode_toggle() -> None:
-    """사이드바 다크모드 토글. apply_global_css() 이전에 세션 상태만 변경."""
-    if "dark_mode" not in st.session_state:
-        st.session_state["dark_mode"] = False
-    icon = "☀️ 라이트 모드" if st.session_state["dark_mode"] else "🌙 다크 모드"
-    if st.sidebar.button(icon, use_container_width=True, key="_dark_toggle"):
-        st.session_state["dark_mode"] = not st.session_state["dark_mode"]
-        st.rerun()
+    """[Task 1.6 D2] 라이트 우선 확정 — 다크모드 토글 제거(깨진 토글이었음).
+
+    호출부 호환을 위해 함수는 no-op 로 남긴다. 사이드바에 토글 버튼을 더 이상 그리지 않는다.
+    """
+    return None
 
 
 def sparkline_html(values: list[float], color: str = "#3f51b5", height: int = 32, width: int = 80) -> str:
@@ -537,63 +426,63 @@ def metric_with_sparkline(
     """, unsafe_allow_html=True)
 
 
-def kpi_gauge_improved(value: float, target: float, title: str, suffix: str = "%", inverse: bool = False):
-    """세련된 반원 게이지 차트 반환 (Plotly Figure)."""
-    import plotly.graph_objects as go
+def kpi_stat_card(
+    value: float,
+    target: float,
+    title: str,
+    suffix: str = "%",
+    inverse: bool = False,
+    delta: str | None = None,
+    max_val: float | None = None,
+) -> None:
+    """[Task 1.6] 목표 마커 진척 바 KPI 스탯 카드 (반원 게이지 대체).
 
-    if inverse:
-        color = GREEN if value <= target else (RED if value > target * 1.5 else YELLOW)
-    else:
-        color = GREEN if value >= target else (RED if value < target * 0.7 else YELLOW)
-
-    max_val = max(100, target * 1.5, value * 1.2) if not inverse else max(target * 2, value * 1.5, 60)
+    라벨 · 큰 수치(tnum) · 목표 마커가 있는 진척 바 · 좌측 의미색 강조.
+    - inverse=False: 값이 target 이상이면 달성(정상=초록). 미달 시 주의/위험.
+    - inverse=True : 값이 target 이하이면 달성(예: 평균처리일 — 낮을수록 좋음).
+    - delta: 전년대비 등 사전 계산된 문자열이 있으면 표기, 없으면 생략(임의 생성 금지).
+    """
     T = _theme()
+    # 달성 판정 → 의미색(좌측 강조 + 바 색)
+    if inverse:
+        ok = value <= target
+        color = SEM_OK if ok else (SEM_DANGER if value > target * 1.5 else SEM_WARN)
+    else:
+        ok = value >= target
+        color = SEM_OK if ok else (SEM_DANGER if value < target * 0.7 else SEM_WARN)
 
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number+delta",
-        value=value,
-        delta={
-            "reference": target,
-            "valueformat": ".1f",
-            "increasing": {"color": GREEN if not inverse else RED},
-            "decreasing": {"color": RED if not inverse else GREEN},
-            "font": {"size": 11},
-        },
-        number={"suffix": suffix, "font": {"size": 28, "color": color}},
-        title={"text": title, "font": {"size": 12, "color": T["text"]}},
-        gauge={
-            "axis": {
-                "range": [0, max_val],
-                "tickfont": {"size": 9, "color": T["sub_text"]},
-                "tickcolor": T["border"],
-                "nticks": 5,
-            },
-            "bar": {"color": color, "thickness": 0.65},
-            "bgcolor": T["card_bg"],
-            "borderwidth": 0,
-            "steps": [
-                {"range": [0, max_val * 0.5],
-                 "color": "#ffebee" if not inverse else "#e8f5e9"},
-                {"range": [max_val * 0.5, max_val * 0.8],
-                 "color": "#fff8e1"},
-                {"range": [max_val * 0.8, max_val],
-                 "color": "#e8f5e9" if not inverse else "#ffebee"},
-            ],
-            "threshold": {
-                "line": {"color": "#333", "width": 2},
-                "value": target,
-                "thickness": 0.85,
-            },
-            "shape": "angular",
-        },
-    ))
-    fig.update_layout(
-        height=210,
-        margin=dict(l=20, r=20, t=45, b=10),
-        paper_bgcolor=T["bg"],
-        font={"color": T["text"]},
-    )
-    return fig
+    # 진척 바 스케일: 기본은 100 또는 목표/값 기준. 진행률(%)·목표 마커 위치(%) 계산.
+    scale = max_val if max_val is not None else (max(100.0, target * 1.3, value * 1.1) if not inverse else max(target * 2, value * 1.2, 1))
+    scale = scale or 1
+    pct = max(0.0, min(100.0, value / scale * 100.0))
+    target_pct = max(0.0, min(100.0, target / scale * 100.0))
+
+    delta_html = ""
+    if delta:
+        d_color = SEM_OK if (delta.startswith("+") or "↑" in delta) else SEM_DANGER
+        delta_html = f'<span class="qms-num" style="font-size:0.78rem;color:{d_color};font-weight:600">{delta}</span>'
+
+    st.markdown(f"""
+    <div style="
+        background:{T['card_bg']};
+        border-radius:12px;
+        padding:14px 16px;
+        border-left:5px solid {color};
+        box-shadow:0 2px 8px rgba(0,0,0,0.06);
+        display:flex; flex-direction:column; gap:8px;
+    ">
+        <span style="font-size:0.78rem;color:{T['sub_text']};font-weight:600;letter-spacing:0.3px">{title}</span>
+        <div style="display:flex;align-items:baseline;gap:8px">
+            <span class="qms-num" style="font-size:1.9rem;font-weight:700;color:{T['text']};line-height:1">{value:g}{suffix}</span>
+            {delta_html}
+        </div>
+        <div style="position:relative;height:9px;border-radius:6px;background:#e9edf5;overflow:visible">
+            <div style="position:absolute;left:0;top:0;height:9px;border-radius:6px;width:{pct:.1f}%;background:{color}"></div>
+            <div title="목표 {target:g}{suffix}" style="position:absolute;left:{target_pct:.1f}%;top:-3px;width:2px;height:15px;background:{NAVY_900}"></div>
+        </div>
+        <span class="qms-num" style="font-size:0.72rem;color:{T['sub_text']}">목표 {target:g}{suffix}</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def filter_reset_button(key: str = "filter_reset") -> bool:

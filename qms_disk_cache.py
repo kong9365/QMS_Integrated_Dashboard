@@ -18,6 +18,11 @@ DISK_TTL = 3600
 _FILE_LOCK = threading.Lock()
 
 
+def cache_dir() -> str:
+    """디스크 캐시 디렉터리 절대경로(.qms_cache). refresh_job 의 _meta.json 위치 등에 사용."""
+    return _CACHE_DIR
+
+
 def _ensure_dir() -> None:
     os.makedirs(_CACHE_DIR, exist_ok=True)
 

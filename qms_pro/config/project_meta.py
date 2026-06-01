@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-"""qms_pro.config.project_meta — 기존 프로젝트 메타 호환 래퍼.
+"""qms_pro.config.project_meta — 프로젝트 메타 facade.
 
-원본 ``qms_project_meta.py`` 는 그대로 유지하고, 새 패키지에서는 여기서 참조만 한다.
+원본 ``qms_project_meta.py`` 는 그대로 유지하고, 이 모듈은 ``PROJECT_META`` 를 재노출만 한다.
 원본을 import 할 수 없는 환경(경로 미설정 등)에서도 깨지지 않도록 빈 dict 로 폴백한다.
-실제 이전(원본 삭제/이동)은 Phase 2 후속 단계에서 진행한다.
+대시보드 메인은 이 facade(``from qms_pro.config.project_meta import PROJECT_META``)를 사용한다.
+**정정**: 원본 삭제/이동(전면 마이그레이션)은 하지 않는다. 위임 구조 유지가 명시적 결정이며
+근거는 ``docs/ARCHITECTURE.md`` 참조(사양서 D3 범위 축소).
 """
 from __future__ import annotations
 
