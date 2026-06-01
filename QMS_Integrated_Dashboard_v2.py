@@ -162,12 +162,28 @@ S.apply_global_css()
 # 상수 / 색상 / 프로젝트 메타
 # ============================================================================
 
+# [Task 1.6 commit2] CHART_COLORS 단일화 — 12종 혼용 폐지.
+# 시리즈색은 토큰 시퀀스(네이비→블루→틸), 상태색은 의미색(고정)으로 매핑.
+# 키 이름은 하위호환을 위해 유지하되 값은 모두 qms_styles 토큰을 가리킨다.
+#   · 시리즈/구조 : primary/blue/light_blue/bar/purple → 네이비·블루 시퀀스
+#   · 연계/개선   : teal → SEM_LINK
+#   · 상태(고정)  : red=위험 / orange=주의 / green=정상 / gray·dark_gray=중립
 CHART_COLORS = {
-    "primary": "#0d1b3e", "blue": "#3f51b5", "light_blue": "#5c6bc0",
-    "bar": "#4a5899", "red": "#e53935", "orange": "#fb8c00",
-    "green": "#27ae60", "gray": "#9e9e9e", "dark_gray": "#616161",
-    "purple": "#8e24aa", "teal": "#00897b", "brown": "#795548",
+    "primary":    S.NAVY_800,
+    "blue":       S.ACCENT_BLUE,
+    "light_blue": S.CHART_SEQUENCE[2],
+    "bar":        S.CHART_SEQUENCE[3],
+    "purple":     S.NAVY_600,    # 기존 보라(12번째 혼용색) → 네이비 시퀀스로 흡수
+    "teal":       S.SEM_LINK,
+    "red":        S.SEM_DANGER,
+    "orange":     S.SEM_WARN,
+    "green":      S.SEM_OK,
+    "gray":       S.SEM_NEUTRAL,
+    "dark_gray":  S.NAVY_400,
+    "brown":      S.NAVY_700,    # 미사용 잔여 키 — 시퀀스로 흡수
 }
+# 카테고리 다수 차트용 연속 시퀀스(색 부족 방지): 부족 시 cycle.
+CHART_SEQUENCE = S.CHART_SEQUENCE
 
 MONTH_LABELS = [f"{m}월" for m in range(1, 13)]
 
