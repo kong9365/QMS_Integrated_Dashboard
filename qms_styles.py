@@ -462,27 +462,24 @@ def kpi_stat_card(
         d_color = SEM_OK if (delta.startswith("+") or "↑" in delta) else SEM_DANGER
         delta_html = f'<span class="qms-num" style="font-size:0.78rem;color:{d_color};font-weight:600">{delta}</span>'
 
-    st.markdown(f"""
-    <div style="
-        background:{T['card_bg']};
-        border-radius:12px;
-        padding:14px 16px;
-        border-left:5px solid {color};
-        box-shadow:0 2px 8px rgba(0,0,0,0.06);
-        display:flex; flex-direction:column; gap:8px;
-    ">
-        <span style="font-size:0.78rem;color:{T['sub_text']};font-weight:600;letter-spacing:0.3px">{title}</span>
-        <div style="display:flex;align-items:baseline;gap:8px">
-            <span class="qms-num" style="font-size:1.9rem;font-weight:700;color:{T['text']};line-height:1">{value:g}{suffix}</span>
-            {delta_html}
-        </div>
-        <div style="position:relative;height:9px;border-radius:6px;background:#e9edf5;overflow:visible">
-            <div style="position:absolute;left:0;top:0;height:9px;border-radius:6px;width:{pct:.1f}%;background:{color}"></div>
-            <div title="목표 {target:g}{suffix}" style="position:absolute;left:{target_pct:.1f}%;top:-3px;width:2px;height:15px;background:{NAVY_900}"></div>
-        </div>
-        <span class="qms-num" style="font-size:0.72rem;color:{T['sub_text']}">목표 {target:g}{suffix}</span>
-    </div>
-    """, unsafe_allow_html=True)
+    # HTML 은 반드시 한 줄로(들여쓰기 금지) — 4칸 이상 들여쓰면 streamlit markdown 이
+    # 코드블록으로 처리해 raw <div> 가 그대로 노출된다(Task 2.1 검증서 발견).
+    _card = (
+        f'<div style="background:{T["card_bg"]};border-radius:12px;padding:14px 16px;'
+        f'border-left:5px solid {color};box-shadow:0 2px 8px rgba(0,0,0,0.06);'
+        f'display:flex;flex-direction:column;gap:8px">'
+        f'<span style="font-size:0.78rem;color:{T["sub_text"]};font-weight:600;letter-spacing:0.3px">{title}</span>'
+        f'<div style="display:flex;align-items:baseline;gap:8px">'
+        f'<span class="qms-num" style="font-size:1.9rem;font-weight:700;color:{T["text"]};line-height:1">{value:g}{suffix}</span>'
+        f'{delta_html}</div>'
+        f'<div style="position:relative;height:9px;border-radius:6px;background:#e9edf5;overflow:visible">'
+        f'<div style="position:absolute;left:0;top:0;height:9px;border-radius:6px;width:{pct:.1f}%;background:{color}"></div>'
+        f'<div title="목표 {target:g}{suffix}" style="position:absolute;left:{target_pct:.1f}%;top:-3px;width:2px;height:15px;background:{NAVY_900}"></div>'
+        f'</div>'
+        f'<span class="qms-num" style="font-size:0.72rem;color:{T["sub_text"]}">목표 {target:g}{suffix}</span>'
+        f'</div>'
+    )
+    st.markdown(_card, unsafe_allow_html=True)
 
 
 def filter_reset_button(key: str = "filter_reset") -> bool:
