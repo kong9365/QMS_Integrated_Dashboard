@@ -306,7 +306,7 @@ def render_analyst_error_reduction_kpi(
     year_col: str = "연도",
 ) -> None:
     """QMS_Dashboard.py 마감회의 탭과 동일: 전년 vs 필터 반영 당년 Analyst error 건수기여도 합 및 감소율."""
-    st.markdown("##### Analyst error 감소율")
+    S.section_header("Analyst error 감소율")
     yc = year_col if year_col in df_oos_full.columns else "연도"
     if (
         not df_oos_full.empty
@@ -741,7 +741,7 @@ def render_raw_data_section(
     ]
 
     if title:
-        st.subheader(title)
+        S.section_header(title)
 
     if allow_change:
         selected_labels = st.multiselect(
@@ -842,7 +842,7 @@ def render_raw_data_section(
         st.caption(f"조회 결과: {len(raw_all)}건")
 
     if do_pqr and not raw_all.empty:
-        st.markdown("##### PQR 보고용 요약 (복사·붙여넣기용)")
+        S.section_header("PQR 보고용 요약 (복사·붙여넣기용)")
         _d = raw_all.reset_index(drop=True)
         _doc = _d["관리번호"] if "관리번호" in _d.columns else pd.Series([pd.NA] * len(_d))
         _event = (
@@ -1013,7 +1013,7 @@ def render_linkage_section(project_key: str, key_suffix: str, title: str | None 
     """
     df = df_override if df_override is not None else F.get(project_key, pd.DataFrame())
     if title:
-        st.subheader(title)
+        S.section_header(title)
     if df is None or df.empty:
         st.info("조회된 데이터가 없습니다.")
         return
@@ -1058,7 +1058,7 @@ def render_linkage_section(project_key: str, key_suffix: str, title: str | None 
     # 섹션 1+2: 체인 Sankey + 자식 프로젝트 타입 분포
     col_s1, col_s2 = st.columns([3, 2])
     with col_s1:
-        st.markdown("#### 본 프로젝트 → 연관프로젝트 흐름")
+        S.section_header("본 프로젝트 → 연관프로젝트 흐름")
         st.caption("왼쪽(본 프로젝트 프로젝트) 에서 시작해 오른쪽(연관프로젝트 프로젝트) 로 흘러가는 건수를 "
                    "선 굵기로 표시합니다. 예: `일탈 → 조사 15건` 은 일탈 15건에서 조사 과제가 생성됐다는 의미입니다.")
         link_counts: dict[tuple[str, str], int] = {}
@@ -1089,7 +1089,7 @@ def render_linkage_section(project_key: str, key_suffix: str, title: str | None 
         else:
             st.info("직계 자식 링크가 없습니다.")
     with col_s2:
-        st.markdown("#### 연관프로젝트 종류별 분포")
+        S.section_header("연관프로젝트 종류별 분포")
         st.caption("본 프로젝트에서 파생된 연관프로젝트를 **프로젝트 종류별(조사 / CAPA / Action Item …)** 로 합산한 건수입니다.")
         comp_rows = []
         for comp_str in base["자식 구성"].fillna(""):
@@ -1118,7 +1118,7 @@ def render_linkage_section(project_key: str, key_suffix: str, title: str | None 
     st.markdown("---")
 
     # 섹션 3: 연관프로젝트 미완료 TOP 20 + drill-down
-    st.markdown("#### 연관프로젝트 미완료 TOP 20")
+    S.section_header("연관프로젝트 미완료 TOP 20")
     st.caption(
         "본 프로젝트에 연결된 연관프로젝트(조사·CAPA·Action Item 등) 중 **아직 종결되지 않은 건수가 많은 순서** 로 "
         "상위 20건을 보여줍니다. 같으면 `미완료 최장 지연일` 기준으로 내림차순."
@@ -1167,7 +1167,7 @@ def render_linkage_section(project_key: str, key_suffix: str, title: str | None 
     st.markdown("---")
 
     # 섹션 4: 이상 케이스 탭
-    st.markdown("#### 점검 필요 케이스")
+    S.section_header("점검 필요 케이스")
     st.caption(
         "본 프로젝트와 연관프로젝트 간 **종결 순서가 맞지 않는** 건을 탭별로 모아 보여줍니다. "
         "각 탭 제목에 마우스를 올리면 판정 기준 설명이 나타납니다."
@@ -1208,7 +1208,7 @@ def render_linkage_section(project_key: str, key_suffix: str, title: str | None 
     st.markdown("---")
 
     # 섹션 5: 연계 단계 히스토그램
-    st.markdown("#### 연계 단계(깊이) 분포")
+    S.section_header("연계 단계(깊이) 분포")
     st.caption(
         "한 건의 본 프로젝트가 얼마나 깊게 이어지는지(연관프로젝트 체인 길이) 를 히스토그램으로 보여줍니다. "
         "**1단계 = 본 프로젝트만 · 연관프로젝트 없음**, **2단계 = 본 프로젝트 → 연관프로젝트 1단계(예: 일탈→조사)**, "
@@ -1384,7 +1384,7 @@ def render_event_category_tab(
             st.markdown("---")
             col_a, col_b = st.columns(2)
             with col_a:
-                st.markdown("##### 자사 vs 외주")
+                S.section_header("자사 vs 외주")
                 if "자사/외주" in ftab.columns:
                     vc = _wgroupby(ftab, "자사/외주", name="건수")
                     fig = px.bar(vc, x="자사/외주", y="건수", text="건수",
@@ -1397,7 +1397,7 @@ def render_event_category_tab(
                     st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_kpi_src")
             with col_b:
                 if kind == "일탈":
-                    st.markdown("##### 일탈 등급 분포")
+                    S.section_header("일탈 등급 분포")
                     if "일탈 등급 대분류" in ftab.columns:
                         g = _wgroupby(ftab, "일탈 등급 대분류", name="건수")
                         g = g[g["건수"] > 0]
@@ -1408,7 +1408,7 @@ def render_event_category_tab(
                             fig2.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=10))
                             st.plotly_chart(fig2, use_container_width=True, key=f"{key_prefix}_kpi_grade")
                 else:
-                    st.markdown("##### 진행상태 분포")
+                    S.section_header("진행상태 분포")
                     if "진행상태" in ftab.columns:
                         g = _wgroupby(ftab, "진행상태", name="건수")
                         g = g[g["건수"] > 0]
@@ -1426,7 +1426,7 @@ def render_event_category_tab(
             st.info(f"{trend_year}년 {label} 데이터가 없습니다.")
         else:
             # ── 월별 추이 (자사/외주 분리)
-            st.markdown("##### 월별 추이 (자사/외주)")
+            S.section_header("월별 추이 (자사/외주)")
             src_col = "자사/외주" if "자사/외주" in ftab_y.columns else None
             month_basis_col = "접수월" if (kind == "일탈" and "접수월" in ftab_y.columns) else mc
 
@@ -1485,7 +1485,7 @@ def render_event_category_tab(
                 st.dataframe(table, use_container_width=True, hide_index=True)
 
             if kind == "일탈":
-                st.markdown("##### 일탈 등급 (대분류) × 자사/외주")
+                S.section_header("일탈 등급 (대분류) × 자사/외주")
                 if "일탈 등급 대분류" in ftab_y.columns:
                     if "자사/외주" in ftab_y.columns:
                         g1 = _wgroupby(ftab_y, ["일탈 등급 대분류", "자사/외주"], name="건수")
@@ -1504,7 +1504,7 @@ def render_event_category_tab(
                     st.plotly_chart(fig_s1, use_container_width=True, key=f"{key_prefix}_trend_grade")
 
             # YoY
-            st.markdown(f"##### YoY 비교 — {trend_year} vs {trend_year - 1}")
+            S.section_header(f"YoY 비교 — {trend_year} vs {trend_year - 1}")
             if ftab_y_prev.empty:
                 st.info("전년도 데이터가 없어 YoY 비교가 불가합니다.")
             else:
@@ -1528,7 +1528,7 @@ def render_event_category_tab(
             st.info(f"{label} 데이터가 없습니다.")
         else:
             if "발생 유형" in ftab.columns:
-                st.markdown("##### 발생 유형 — 자사/외주 분리")
+                S.section_header("발생 유형 — 자사/외주 분리")
                 _render_source_split(ftab, f"{key_prefix}_cause_main",
                                        dim="발생 유형", orientation="h", top_n=15)
             else:
@@ -1536,12 +1536,12 @@ def render_event_category_tab(
 
             st.divider()
             if "발생 세부유형" in ftab.columns:
-                st.markdown("##### 발생 세부유형 — 자사/외주 분리 (Top 20)")
+                S.section_header("발생 세부유형 — 자사/외주 분리 (Top 20)")
                 _render_source_split(ftab, f"{key_prefix}_cause_sub",
                                        dim="발생 세부유형", orientation="h", top_n=20)
 
             st.divider()
-            st.markdown("##### 이상발생 원인 (Analyst Error 등)")
+            S.section_header("이상발생 원인 (Analyst Error 등)")
             if "이상발생 원인" in ftab.columns:
                 _render_source_split(ftab, f"{key_prefix}_cause_aer",
                                        dim="이상발생 원인", orientation="h", top_n=15)
@@ -1557,7 +1557,7 @@ def render_event_category_tab(
             if rf.empty:
                 st.info("재발여부 값이 없습니다.")
             else:
-                st.markdown("##### 재발여부 분포 — 자사/외주 분리")
+                S.section_header("재발여부 분포 — 자사/외주 분리")
                 if "자사/외주" in rf.columns:
                     r_own, r_out = st.columns(2)
                     for col_ui, src in [(r_own, "자사"), (r_out, "외주")]:
@@ -1580,7 +1580,7 @@ def render_event_category_tab(
                     st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_recur_all")
 
                 st.divider()
-                st.markdown("##### 재발건 샘플 목록")
+                S.section_header("재발건 샘플 목록")
                 show_cols = [c for c in ["관리번호", "자사/외주", "제목", "재발여부", "작성팀",
                                            "이상발생 원인", "발생 유형", "발생 세부유형"]
                              if c in rf.columns]
@@ -1835,7 +1835,7 @@ with tab_exec:
     # 하단 2단: 기한초과 + 신규 프로젝트 분포
     ov1, ov2 = st.columns(2)
     with ov1:
-        st.markdown("#### 🚨 기한 초과 항목 (전 프로젝트)")
+        S.section_header("🚨 기한 초과 항목 (전 프로젝트)")
         overdue_frames = []
         for pk, df_p in F.items():
             if df_p.empty or "D-day" not in df_p.columns:
@@ -2055,7 +2055,7 @@ with tab_inv:
         if finv.empty:
             st.warning("조사 데이터가 없습니다.")
         else:
-            st.subheader("5M1E 원인 조사 현황")
+            S.section_header("5M1E 원인 조사 현황")
             m1e_cols = [c for c in finv.columns if c.startswith("5M1E_") and not c.endswith("_내용")]
             if m1e_cols:
                 m1e_data = finv[m1e_cols].apply(lambda x: (x == "수행").sum()).reset_index()
@@ -2069,7 +2069,7 @@ with tab_inv:
                 fig_m1e.update_traces(textposition="outside")
                 st.plotly_chart(fig_m1e, use_container_width=True)
 
-                st.markdown("##### 5M1E 항목별 수행 비율")
+                S.section_header("5M1E 항목별 수행 비율")
                 per_row = []
                 for c in m1e_cols:
                     done = int((finv[c] == "수행").sum())
@@ -2091,7 +2091,7 @@ with tab_inv:
             st.warning("조사 데이터가 없습니다.")
         else:
             mc_i = _month_col_for_df(finv)
-            st.markdown("##### 월별 조사 발생 추이")
+            S.section_header("월별 조사 발생 추이")
             if mc_i in finv.columns:
                 mf = _monthly_weighted_series(finv, mc_i)
                 fig = go.Figure(go.Scatter(
@@ -2102,7 +2102,7 @@ with tab_inv:
                                     margin=dict(l=30, r=10, t=10, b=30))
                 st.plotly_chart(fig, use_container_width=True)
 
-            st.markdown("##### 팀별 조사 현황")
+            S.section_header("팀별 조사 현황")
             tcol = "작성팀" if "작성팀" in finv.columns else None
             if tcol:
                 tm = (finv.drop_duplicates(subset=["관리번호"])
@@ -2167,7 +2167,7 @@ with tab_capa:
         else:
             cc1, cc2 = st.columns(2)
             with cc1:
-                st.subheader("CAPA 진행상태")
+                S.section_header("CAPA 진행상태")
                 if "진행상태" in fcapa.columns:
                     sd = fcapa["진행상태"].value_counts().reset_index()
                     sd.columns = ["상태", "건수"]
@@ -2177,7 +2177,7 @@ with tab_capa:
                     fig_cs.update_traces(textinfo="label+value", textfont_size=11)
                     st.plotly_chart(fig_cs, use_container_width=True)
             with cc2:
-                st.subheader("CAPA 구분")
+                S.section_header("CAPA 구분")
                 if "CAPA 구분" in fcapa.columns:
                     gd = fcapa["CAPA 구분"].value_counts().reset_index()
                     gd.columns = ["구분", "건수"]
@@ -2188,7 +2188,7 @@ with tab_capa:
                     st.plotly_chart(fig_g, use_container_width=True)
 
             st.divider()
-            st.subheader("CAPA 상세 목록")
+            S.section_header("CAPA 상세 목록")
             capa_disp = [c for c in ["관리번호", "제목", "등록자", "기한일", "진행상태",
                                       "D-day", "CAPA 구분", "사유"] if c in fcapa.columns]
             st.dataframe(
@@ -2208,7 +2208,7 @@ with tab_capa:
                     delta=f"{safe_pct(cai_d + ai_d, cai_t + ai_t):.0f}%")
 
         st.divider()
-        st.subheader("모니터링AI 이행률 게이지")
+        S.section_header("모니터링AI 이행률 게이지")
         ai_rate = safe_pct(ai_d, ai_t)
         fig_g = go.Figure(go.Indicator(mode="gauge+number", value=ai_rate,
             number={"suffix": "%", "font": {"size": 36}},
@@ -2222,7 +2222,7 @@ with tab_capa:
         st.plotly_chart(fig_g, use_container_width=True)
 
     with capa_deadline:
-        st.subheader("기한 초과·지연 현황")
+        S.section_header("기한 초과·지연 현황")
         overdue_frames = []
         for _label, _df in [("CAPA", fcapa), ("CAPA AI", fcapaai), ("모니터링AI", fai)]:
             if _df.empty or "D-day" not in _df.columns:
@@ -2293,7 +2293,7 @@ with tab_change:
         else:
             cc1, cc2 = st.columns(2)
             with cc1:
-                st.subheader("변경 등급별 분포")
+                S.section_header("변경 등급별 분포")
                 if "변경 등급" in fchg.columns:
                     gd = fchg["변경 등급"].value_counts().reset_index()
                     gd.columns = ["등급", "건수"]
@@ -2305,7 +2305,7 @@ with tab_change:
                         fig_gr.update_traces(textinfo="label+value+percent", textfont_size=11)
                         st.plotly_chart(fig_gr, use_container_width=True)
             with cc2:
-                st.subheader("변경 구분 (영구/임시)")
+                S.section_header("변경 구분 (영구/임시)")
                 if "변경 구분" in fchg.columns:
                     dd = fchg["변경 구분"].value_counts().reset_index()
                     dd.columns = ["구분", "건수"]
@@ -2321,7 +2321,7 @@ with tab_change:
         if fchgimp.empty:
             st.info("변경영향성평가 데이터가 없습니다.")
         elif "영향 GMP 영역" in fchgimp.columns:
-            st.subheader("영향성평가 GMP 영역 분포")
+            S.section_header("영향성평가 GMP 영역 분포")
             areas = fchgimp["영향 GMP 영역"].dropna().str.split(", ").explode()
             areas = areas[areas != "해당 없음"].value_counts().reset_index()
             areas.columns = ["영역", "건수"]
@@ -2342,7 +2342,7 @@ with tab_change:
         if fchgout.empty:
             st.info("외주변경 데이터가 없습니다.")
         else:
-            st.subheader("외주변경 위탁처별 현황")
+            S.section_header("외주변경 위탁처별 현황")
             if "위탁처" in fchgout.columns:
                 cmo = (fchgout[fchgout["위탁처"].notna() & (fchgout["위탁처"] != "")]
                        ["위탁처"].value_counts().head(15).reset_index())
@@ -2363,7 +2363,7 @@ with tab_change:
         if fchgai.empty:
             st.info("변경 Action Item 데이터가 없습니다.")
         else:
-            st.subheader("변경 Action Item 이행 현황")
+            S.section_header("변경 Action Item 이행 현황")
             ai_total = len(fchgai)
             ai_done = int((fchgai["완료여부"] == "C").sum()) if "완료여부" in fchgai.columns else 0
             k1, k2, k3 = st.columns(3)
@@ -2428,7 +2428,7 @@ with tab_complain:
         k4.metric("평균 처리일", f"{avg_d}일" if avg_d else "N/A")
 
         if not fcmp.empty:
-            st.markdown("##### 월별 불만 접수")
+            S.section_header("월별 불만 접수")
             _mc = _month_col_for_df(fcmp)
             if _mc in fcmp.columns:
                 cmf = _monthly_weighted_series(fcmp, _mc)
@@ -2447,7 +2447,7 @@ with tab_complain:
         else:
             cc1, cc2 = st.columns(2)
             with cc1:
-                st.subheader("불만 유형별 분류")
+                S.section_header("불만 유형별 분류")
                 tc = ("불만 구분" if "불만 구분" in fcmp.columns
                        else "불만 유형" if "불만 유형" in fcmp.columns else None)
                 if tc:
@@ -2463,7 +2463,7 @@ with tab_complain:
                 else:
                     st.info("불만 유형 컬럼 없음")
             with cc2:
-                st.subheader("처리 결과 분포")
+                S.section_header("처리 결과 분포")
                 rc = ("처리 결과" if "처리 결과" in fcmp.columns
                        else "처리결과" if "처리결과" in fcmp.columns else None)
                 if rc:
@@ -2495,7 +2495,7 @@ with tab_complain:
                 vc = vc[vc[label].notna() & (vc[label] != "")]
                 if vc.empty:
                     continue
-                st.markdown(f"##### {label} 분포")
+                S.section_header(f"{label} 분포")
                 fig_v = px.bar(vc.sort_values("건수", ascending=True),
                                 x="건수", y=label, orientation="h", text="건수",
                                 color_discrete_sequence=[CHART_COLORS.get("purple", "#9467bd")])
@@ -2649,12 +2649,12 @@ with tab_workflow:
                           "고유 상위번호": parents.nunique()})
 
     if link_data:
-        st.subheader("후속 워크플로우 연계 현황")
+        S.section_header("후속 워크플로우 연계 현황")
         ldf = pd.DataFrame(link_data)
         st.dataframe(ldf, use_container_width=True, hide_index=True)
 
         # Sankey-like 시각화
-        st.subheader("품질이슈 → 후속조치 흐름")
+        S.section_header("품질이슈 → 후속조치 흐름")
         oos_total = foos["관리번호"].nunique() if not foos.empty and "관리번호" in foos.columns else 0
         dev_total = fdev["관리번호"].nunique() if not fdev.empty and "관리번호" in fdev.columns else 0
         inv_cnt = finv["관리번호"].nunique() if not finv.empty and "관리번호" in finv.columns else 0
@@ -2735,7 +2735,7 @@ with tab_workflow:
                     st.plotly_chart(fig_corr, use_container_width=True)
 
                 with c_col2:
-                    st.markdown("##### 상관계수")
+                    S.section_header("상관계수")
                     _level = "강함" if _corr_str >= 0.7 else ("보통" if _corr_str >= 0.4 else "약함")
                     _color = "#e74c3c" if _corr_str >= 0.7 else ("#f39c12" if _corr_str >= 0.4 else "#27ae60")
                     st.markdown(f"""
@@ -2770,7 +2770,7 @@ with tab_deadline:
     st.markdown("---")
 
     # 전 프로젝트 D-day 분포
-    st.subheader("전 프로젝트 기한 현황")
+    S.section_header("전 프로젝트 기한 현황")
     dd_frames = []
     for pk, df_p in F.items():
         if df_p.empty or "D-day" not in df_p.columns:
@@ -2801,7 +2801,7 @@ with tab_deadline:
 
         # 기한연장 분석
         if not fext.empty:
-            st.subheader("기한연장 현황")
+            S.section_header("기한연장 현황")
             ext_total = len(fext)
             ext_done = int((fext["완료여부"] == "C").sum()) if "완료여부" in fext.columns else 0
             e1, e2, e3 = st.columns(3)
