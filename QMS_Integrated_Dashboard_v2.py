@@ -290,12 +290,8 @@ def _to_excel_safe_df(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def render_footer():
-    S.render_footer()
-
-def render_header(title: str, subtitle: str = ""):
-    S.render_header(title, subtitle)
-
+# [Task 1.5 D1] render_header/render_footer 중복 래퍼 제거 — qms_styles 단일 소스를
+# S.render_header / S.render_footer 로 직접 호출(아래 모든 호출부를 S. 접두로 통일).
 def kpi_gauge(value, target, title, suffix="%", inverse=False):
     """개선된 반원 게이지 차트 (qms_styles 위임)."""
     return S.kpi_gauge_improved(value, target, title, suffix=suffix, inverse=inverse)
@@ -1313,7 +1309,7 @@ def render_event_category_tab(
         st.warning("`이벤트 구분` 컬럼이 없어 일탈/인시던트 분리가 불가합니다.")
         ftab = fdev_full.copy()
 
-    render_header(f"{label}" + (" (자사 · 외주)" if kind == "일탈" else " (자사 · 외주)"))
+    S.render_header(f"{label}" + (" (자사 · 외주)" if kind == "일탈" else " (자사 · 외주)"))
     st.markdown("---")
 
     # ─── 상단 공통 필터 ──────────────────────────────────────────────
@@ -1686,7 +1682,7 @@ def render_event_category_tab(
             df_override=ftab,
         )
 
-    render_footer()
+    S.render_footer()
 
 
 # ============================================================================
@@ -1715,7 +1711,7 @@ tab_complain, tab_workflow, tab_deadline, tab_settings = st.tabs([
 # ============================================================================
 
 with tab_exec:
-    render_header("경영진 품질 대시보드", f"MFDS GMP 점검 대비 KPI | {datetime.now().strftime('%Y-%m-%d')}")
+    S.render_header("경영진 품질 대시보드", f"MFDS GMP 점검 대비 KPI | {datetime.now().strftime('%Y-%m-%d')}")
     st.markdown("---")
 
     # KPI 산출
@@ -1931,7 +1927,7 @@ with tab_exec:
         _yoy_disp = [c for c in _yoy_df.columns if c != "증감"]
         st.dataframe(_yoy_df[_yoy_disp], use_container_width=True, hide_index=True)
 
-    render_footer()
+    S.render_footer()
 
 
 # ============================================================================
@@ -1952,7 +1948,7 @@ _mc_oos = _month_col_for_df(foos)
 # ============================================================================
 
 with tab_oos:
-    render_header("OOS (Out of Specification)")
+    S.render_header("OOS (Out of Specification)")
     st.markdown("---")
     primary_year = _primary_year
     prev_year = _prev_year
@@ -1992,7 +1988,7 @@ with tab_oos:
             detail_view=True,
         )
 
-    render_footer()
+    S.render_footer()
 
 
 # ============================================================================
@@ -2029,7 +2025,7 @@ with tab_incident:
 # ============================================================================
 
 with tab_inv:
-    render_header("조사 (Investigation)")
+    S.render_header("조사 (Investigation)")
     st.markdown("---")
 
     i_overview, i_m1e, i_trend, i_link, i_tab_raw = st.tabs(
@@ -2136,7 +2132,7 @@ with tab_inv:
                              "자식 수(전체)", "자식 미종결 수", "체인 최대 깊이"],
         )
 
-    render_footer()
+    S.render_footer()
 
 
 # ============================================================================
@@ -2144,7 +2140,7 @@ with tab_inv:
 # ============================================================================
 
 with tab_capa:
-    render_header("CAPA & Action Item 관리")
+    S.render_header("CAPA & Action Item 관리")
     st.markdown("---")
 
     c_t = len(fcapa); c_d = int((fcapa["완료여부"] == "C").sum()) if "완료여부" in fcapa.columns and c_t else 0
@@ -2259,7 +2255,7 @@ with tab_capa:
                              "자식 수(전체)", "자식 미종결 수"],
         )
 
-    render_footer()
+    S.render_footer()
 
 
 # ============================================================================
@@ -2267,7 +2263,7 @@ with tab_capa:
 # ============================================================================
 
 with tab_change:
-    render_header("변경관리 통합 현황")
+    S.render_header("변경관리 통합 현황")
     st.markdown("---")
 
     chg_kpi, chg_grade, chg_impact, chg_out, chg_ai, chg_link, chg_tab_raw = st.tabs(
@@ -2399,7 +2395,7 @@ with tab_change:
                              "부모 관리번호", "자식 수(전체)", "자식 미종결 수"],
         )
 
-    render_footer()
+    S.render_footer()
 
 
 # ============================================================================
@@ -2407,7 +2403,7 @@ with tab_change:
 # ============================================================================
 
 with tab_complain:
-    render_header("고객불만 현황")
+    S.render_header("고객불만 현황")
     st.markdown("---")
 
     cmp_kpi, cmp_type, cmp_cause, cmp_perf, cmp_link, cmp_tab_raw = st.tabs(
@@ -2629,7 +2625,7 @@ with tab_complain:
                              "접수일", "처리완료일", "자식 수(전체)", "자식 미종결 수"],
         )
 
-    render_footer()
+    S.render_footer()
 
 
 # ============================================================================
@@ -2637,7 +2633,7 @@ with tab_complain:
 # ============================================================================
 
 with tab_workflow:
-    render_header("워크플로우 연계 분석")
+    S.render_header("워크플로우 연계 분석")
     st.markdown("---")
     st.markdown("OOS/일탈 발생 시 후속 워크플로우(조사, CAPA, Action Item)로 어떻게 연결되는지 분석합니다.")
     st.markdown("")
@@ -2762,7 +2758,7 @@ with tab_workflow:
     if not _corr_ok:
         st.info("OOS 또는 CAPA 데이터가 부족하여 상관 분석을 표시할 수 없습니다.")
 
-    render_footer()
+    S.render_footer()
 
 
 # ============================================================================
@@ -2770,7 +2766,7 @@ with tab_workflow:
 # ============================================================================
 
 with tab_deadline:
-    render_header("기한 & 일정 관리")
+    S.render_header("기한 & 일정 관리")
     st.markdown("---")
 
     # 전 프로젝트 D-day 분포
@@ -2876,7 +2872,7 @@ with tab_deadline:
     else:
         S.empty_state("기한 데이터가 없습니다.", "📭")
 
-    render_footer()
+    S.render_footer()
 
 
 # ============================================================================
@@ -2884,7 +2880,7 @@ with tab_deadline:
 # ============================================================================
 
 with tab_settings:
-    render_header("시스템 설정 & 관리")
+    S.render_header("시스템 설정 & 관리")
     st.markdown("---")
 
     cfg_tab1, cfg_tab2, cfg_tab3, cfg_tab4 = st.tabs(
@@ -3080,4 +3076,4 @@ Streamlit        : {st.__version__}
             except Exception as _e:
                 st.error(f"PDF 오류: {_e}")
 
-    render_footer()
+    S.render_footer()
