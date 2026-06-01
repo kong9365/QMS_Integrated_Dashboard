@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from qms_styles import (
-    # 색상 상수
+    # 색상 상수(별칭)
     PRIMARY,
     PRIMARY_L,
     ACCENT,
@@ -22,6 +22,10 @@ from qms_styles import (
     RED,
     ORANGE,
     CHART_COLORS,
+    # 디자인 토큰(Task 1.6 — 단일 정의 재노출)
+    NAVY_900, NAVY_800, NAVY_700, NAVY_600, NAVY_400, ACCENT_BLUE,
+    SEM_DANGER, SEM_WARN, SEM_OK, SEM_INFO, SEM_LINK, SEM_NEUTRAL,
+    CHART_SEQUENCE, FONT_BODY, FONT_MONO,
     # 레이아웃/헤더/푸터
     apply_global_css,
     section_header,
@@ -51,6 +55,9 @@ __all__ = [
     "RED",
     "ORANGE",
     "CHART_COLORS",
+    "NAVY_900", "NAVY_800", "NAVY_700", "NAVY_600", "NAVY_400", "ACCENT_BLUE",
+    "SEM_DANGER", "SEM_WARN", "SEM_OK", "SEM_INFO", "SEM_LINK", "SEM_NEUTRAL",
+    "CHART_SEQUENCE", "FONT_BODY", "FONT_MONO",
     "apply_global_css",
     "section_header",
     "render_header",

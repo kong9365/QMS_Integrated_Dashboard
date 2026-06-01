@@ -11,19 +11,42 @@ S.empty_state(...)
 
 import streamlit as st
 
-# ─── 색상 토큰 ────────────────────────────────────────────────────────────────
+# ─── 디자인 토큰 (단일 정의 — Task 1.6) ──────────────────────────────────────
+# 사양서 §7 토큰. 기존 상수명(PRIMARY/ACCENT/GREEN…)은 호환을 위해 새 토큰의 별칭으로 유지.
 
-PRIMARY   = "#0d1b3e"
-PRIMARY_L = "#1a3a6c"
-ACCENT    = "#3f51b5"
+# 구조색(Navy)
+NAVY_900 = "#0B1530"
+NAVY_800 = "#0E1B3D"
+NAVY_700 = "#16244F"
+NAVY_600 = "#213164"
+NAVY_400 = "#6B79A6"
+ACCENT_BLUE = "#2F54D6"   # Accent
+
+# 의미색(고정) — 상태 매핑 단일 출처
+SEM_DANGER  = "#D7263D"   # 위험 = 초과/미종결
+SEM_WARN    = "#E8830C"   # 주의 = 임박(D-3)
+SEM_OK      = "#1F9D63"   # 정상 = 완료/달성
+SEM_INFO    = "#2F6FED"   # 정보 = 진행/정보
+SEM_LINK    = "#0E9AA7"   # 연계 = 연계/개선 (teal)
+SEM_NEUTRAL = "#7A88A8"   # 중립 = 비활성
+
+# ── 기존 상수명 별칭(하위호환; 값은 새 토큰으로 매핑) ──
+PRIMARY   = NAVY_800       # 구조 기본
+PRIMARY_L = NAVY_600
+ACCENT    = ACCENT_BLUE
 LIGHT_BG  = "#f8f9fa"
 BORDER    = "#e0e0e0"
+GREEN  = SEM_OK
+YELLOW = SEM_WARN
+RED    = SEM_DANGER
+ORANGE = SEM_WARN
 
-# 상태 색상
-GREEN  = "#27ae60"
-YELLOW = "#f39c12"
-RED    = "#e74c3c"
-ORANGE = "#fb8c00"
+# 차트 시퀀스(네이비→블루→틸) — 12종 혼용 폐지(D1 잔여, 단일화는 commit 2에서 적용)
+CHART_SEQUENCE = [NAVY_800, ACCENT_BLUE, "#3D6AD6", "#5C8AE0", SEM_LINK, NAVY_400, "#2B8FA8", "#8FA0C8"]
+
+# 타이포: 수치/관리번호/D-day 는 mono + tabular-nums (CSS 클래스 .qms-num)
+FONT_BODY = "Pretendard, -apple-system, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif"
+FONT_MONO = "'JetBrains Mono', 'Roboto Mono', 'Consolas', ui-monospace, monospace"
 
 # 차트 팔레트
 CHART_COLORS = {
@@ -75,8 +98,17 @@ def _theme() -> dict:
 def apply_global_css() -> None:
     """앱 시작 시 1회 호출. 전체 CSS 주입."""
     T = _theme()
+    # Pretendard 본문 폰트 — 사내망 CDN 차단 시 시스템폰트로 자동 폴백(로컬 번들은 후속 과제).
+    st.markdown(
+        '<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@1.3.9/dist/web/static/pretendard.min.css">',
+        unsafe_allow_html=True,
+    )
     st.markdown(f"""
 <style>
+    /* ─── 타이포 토큰 (Task 1.6) ─────────────────────────── */
+    html, body, [class*="st-"], .stApp {{ font-family: {FONT_BODY}; }}
+    /* 수치/관리번호/D-day: mono + tabular-nums (정렬·자릿수 안정) */
+    .qms-num, .qms-num * {{ font-family: {FONT_MONO}; font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }}
     /* ─── 기본 리셋 ─────────────────────────────────────── */
     #MainMenu {{ visibility: hidden; }}
     footer {{ visibility: hidden; }}
