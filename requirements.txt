@@ -5,6 +5,8 @@
 # 웹 UI
 # 1.44.1: st.dialog / st.segmented_control 지원(Phase 2 IA 재편에 사용)
 streamlit==1.44.1
+# 좌측 워크스페이스 레일(Task 2.1, 11탭→7 워크스페이스)
+streamlit-option-menu==0.4.0
 
 # 데이터 처리
 pandas==2.2.3

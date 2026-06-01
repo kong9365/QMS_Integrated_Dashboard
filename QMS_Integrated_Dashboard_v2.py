@@ -17,6 +17,7 @@ os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
+from streamlit_option_menu import option_menu  # 좌측 워크스페이스 레일(Task 2.1)
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -1706,20 +1707,85 @@ _overdue_all_count = sum(
 )
 _deadline_label = f"⏰ 기한관리 ({_overdue_all_count}건 초과)" if _overdue_all_count > 0 else "⏰ 기한관리"
 
-tab_exec, tab_oos, tab_dev, tab_incident, tab_inv, tab_capa, tab_change, \
-tab_complain, tab_workflow, tab_deadline, tab_settings = st.tabs([
-    "📊 KPI",
-    "🔬 OOS", "🧪 일탈", "⚠️ 인시던트", "🔍 조사",
-    "✅ CAPA관리", "🔄 변경관리", "📢 고객불만",
-    "🔗 워크플로우", _deadline_label, "⚙️ 설정",
-])
+# ============================================================================
+# 좌측 워크스페이스 레일 (Task 2.1) — 11 상단탭 → 7 워크스페이스
+# 구조: CONTENT_MAP.md 매핑. 시각: docs/prototype.html(좌측 레일). 가로 sticky 탭 제거로
+# 헤더 클릭 가로채기 현상 해소. 기존 탭 본문(렌더 함수 호출)은 rebind(재배치)만, 로직 불변.
+#
+# 동작: 사이드바 option_menu 로 워크스페이스 선택 → 그 안에서 도메인이 여럿이면 sub-view
+# (segmented_control)로 1개 선택. 각 기존 'with tab_x:' 블록은 'if _render_tab("x"):' 로 바뀌어
+# (1줄 치환, 본문/들여쓰기 불변) 활성 sub-view 일 때만 실행된다.
+# ============================================================================
+# 워크스페이스 정의: (id, 라벨, Bootstrap아이콘, [(탭키, sub-view 라벨), ...])
+_WORKSPACES = [
+    ("overview", "종합 현황",     "grid-1x2-fill",
+        [("exec", "경영진 KPI"), ("workflow", "워크플로우 연계"), ("deadline", "기한 관리")]),
+    ("qc",       "QC 시험품질",   "eyedropper",
+        [("oos", "OOS"), ("inv", "조사")]),
+    ("qa",       "QA 품질운영",   "shield-check",
+        [("dev", "일탈"), ("incident", "인시던트"), ("complain", "고객불만")]),
+    ("actions",  "조치·변경",     "arrow-repeat",
+        [("capa", "CAPA·Action"), ("change", "변경관리")]),
+    ("product",  "제품·배치품질", "box-seam",          [("product_new", "제품·배치품질")]),
+    ("alerts",   "알림·모니터링", "bell",              [("alerts_new", "알림·모니터링")]),
+    ("data",     "데이터·설정",   "table",             [("settings", "설정")]),
+]
+_WS_LABELS = [w[1] for w in _WORKSPACES]
+_WS_ICONS = [w[2] for w in _WORKSPACES]
+_WS_BY_LABEL = {w[1]: w[0] for w in _WORKSPACES}
+_WS_SUBVIEWS = {w[0]: w[3] for w in _WORKSPACES}          # ws_id -> [(tabkey, label)]
+_TABKEY_TO_WS = {tk: w[0] for w in _WORKSPACES for (tk, _l) in w[3]}
+_TABKEY_LABEL = {tk: l for w in _WORKSPACES for (tk, l) in w[3]}
+
+with st.sidebar:
+    st.divider()
+    _active_ws_label = option_menu(
+        menu_title="워크스페이스",
+        options=_WS_LABELS,
+        icons=_WS_ICONS,
+        menu_icon="columns-gap",
+        default_index=0,
+        key="qms_ws_rail",
+        styles={
+            "container": {"padding": "4px", "background-color": "transparent"},
+            "nav-link": {"font-size": "14px", "font-weight": "600", "--hover-color": "#eef1f8"},
+            "nav-link-selected": {"background-color": S.ACCENT_BLUE},
+            "icon": {"font-size": "15px"},
+        },
+    )
+_active_ws = _WS_BY_LABEL.get(_active_ws_label, "overview")
+
+# 활성 워크스페이스의 sub-view 선택(도메인이 2개 이상일 때만 세그먼트 노출).
+_subviews = _WS_SUBVIEWS.get(_active_ws, [])
+if len(_subviews) > 1:
+    _sub_labels = [l for (_tk, l) in _subviews]
+    # 기한 관리 라벨에 초과 배지 반영(기존 _deadline_label 취지 유지)
+    _sub_labels = [(f"{l} ({_overdue_all_count}건 초과)" if tk == "deadline" and _overdue_all_count > 0 else l)
+                   for (tk, l) in _subviews]
+    _picked = st.segmented_control(
+        "보기", options=_sub_labels, default=_sub_labels[0],
+        key=f"subview_{_active_ws}", label_visibility="collapsed",
+    )
+    _idx = _sub_labels.index(_picked) if _picked in _sub_labels else 0
+    _active_tabkey = _subviews[_idx][0]
+else:
+    _active_tabkey = _subviews[0][0] if _subviews else None
+
+
+def _render_tab(tabkey: str) -> bool:
+    """기존 'with tab_x:' 를 대체하는 가드. 활성 워크스페이스의 선택된 sub-view 일 때만 True.
+
+    (Python with 본문은 항상 실행되므로 no-op 컨텍스트로는 비활성 탭이 메인에 새어나온다.
+     그래서 'with tab_x:' → 'if _render_tab(\"x\"):' 1줄 치환으로 본문 실행 자체를 가드한다.)
+    """
+    return tabkey == _active_tabkey
 
 
 # ============================================================================
 # 탭 1: 경영진 대시보드
 # ============================================================================
 
-with tab_exec:
+if _render_tab("exec"):
     S.render_header("경영진 품질 대시보드", f"MFDS GMP 점검 대비 KPI | {datetime.now().strftime('%Y-%m-%d')}")
     st.markdown("---")
 
@@ -1957,7 +2023,7 @@ _mc_oos = _month_col_for_df(foos)
 # 탭 2: OOS
 # ============================================================================
 
-with tab_oos:
+if _render_tab("oos"):
     S.render_header("OOS (Out of Specification)")
     st.markdown("---")
     primary_year = _primary_year
@@ -2006,7 +2072,7 @@ with tab_oos:
 # 탭 3: 일탈 (자사 · 외주)
 # ============================================================================
 
-with tab_dev:
+if _render_tab("dev"):
     render_event_category_tab(
         kind="일탈",
         key_prefix="dev",
@@ -2020,7 +2086,7 @@ with tab_dev:
 # 탭 3-2: 인시던트 (자사 · 외주)
 # ============================================================================
 
-with tab_incident:
+if _render_tab("incident"):
     render_event_category_tab(
         kind="인시던트",
         key_prefix="inc",
@@ -2034,7 +2100,7 @@ with tab_incident:
 # 탭 4: 조사
 # ============================================================================
 
-with tab_inv:
+if _render_tab("inv"):
     S.render_header("조사 (Investigation)")
     st.markdown("---")
 
@@ -2149,7 +2215,7 @@ with tab_inv:
 # 탭 3: CAPA 관리
 # ============================================================================
 
-with tab_capa:
+if _render_tab("capa"):
     S.render_header("CAPA & Action Item 관리")
     st.markdown("---")
 
@@ -2272,7 +2338,7 @@ with tab_capa:
 # 탭 4: 변경관리
 # ============================================================================
 
-with tab_change:
+if _render_tab("change"):
     S.render_header("변경관리 통합 현황")
     st.markdown("---")
 
@@ -2412,7 +2478,7 @@ with tab_change:
 # 탭 5: 고객불만
 # ============================================================================
 
-with tab_complain:
+if _render_tab("complain"):
     S.render_header("고객불만 현황")
     st.markdown("---")
 
@@ -2642,7 +2708,7 @@ with tab_complain:
 # 탭 6: 워크플로우 연계
 # ============================================================================
 
-with tab_workflow:
+if _render_tab("workflow"):
     S.render_header("워크플로우 연계 분석")
     st.markdown("---")
     st.markdown("OOS/일탈 발생 시 후속 워크플로우(조사, CAPA, Action Item)로 어떻게 연결되는지 분석합니다.")
@@ -2775,7 +2841,7 @@ with tab_workflow:
 # 탭 7: 기한관리
 # ============================================================================
 
-with tab_deadline:
+if _render_tab("deadline"):
     S.render_header("기한 & 일정 관리")
     st.markdown("---")
 
@@ -2889,7 +2955,7 @@ with tab_deadline:
 # 탭 9: 설정
 # ============================================================================
 
-with tab_settings:
+if _render_tab("settings"):
     S.render_header("시스템 설정 & 관리")
     st.markdown("---")
 
@@ -3086,4 +3152,33 @@ Streamlit        : {st.__version__}
             except Exception as _e:
                 st.error(f"PDF 오류: {_e}")
 
+    S.render_footer()
+
+
+# ============================================================================
+# 신설 워크스페이스 자리 확보 (Task 2.1) — 내용은 Phase 3에서 구현
+#  · 제품·배치품질: APQR(품목×연도) + 출하 전 확인(lot) — Task 3.3
+#  · 알림·모니터링: 룰 기반 알림 센터 — Task 3.4 (현 설정탭 알림설정이 모태)
+# 레일에는 지금 노출하되, 본문은 "준비 중 + 예정 내용" 안내로 자리만 잡는다.
+# ============================================================================
+if _render_tab("product_new"):
+    S.render_header("제품·배치 품질", "APQR · 출하 전 확인 (Phase 3 신설 예정)")
+    st.markdown("---")
+    st.info(
+        "이 워크스페이스는 **Phase 3 (Task 3.3)** 에서 구현됩니다.\n\n"
+        "- **APQR(연간품질평가)**: 품목 × 연도별 OOS/일탈/조사/CAPA·재발·원인 집계\n"
+        "- **출하 전 확인(lot)**: 제조번호 입력 → 직접보유+체인 자식 수집 → 종결 시 ✅PASS / 미종결 ⛔HOLD\n\n"
+        "※ 모니터링 보조이며 정식 출하 판정 시스템이 아닙니다."
+    )
+    S.render_footer()
+
+if _render_tab("alerts_new"):
+    S.render_header("알림·모니터링", "룰 기반 알림 센터 (Phase 3 신설 예정)")
+    st.markdown("---")
+    st.info(
+        "이 워크스페이스는 **Phase 3 (Task 3.4)** 에서 구현됩니다.\n\n"
+        "- 기한초과 · D-3 임박 · 재발 · 미종결 누적 **룰 관리**\n"
+        "- 워크스페이스/스코프별 구독 + Slack · 이메일 채널(기존 `alert_service` 활용)\n\n"
+        "현재 알림 설정은 **데이터·설정 → 알림 설정** 탭에 있습니다."
+    )
     S.render_footer()
