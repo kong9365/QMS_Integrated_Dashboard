@@ -375,7 +375,7 @@ def render_analyst_error_reduction_kpi(
             height=280,
             margin=dict(l=20, r=10, t=10, b=40),
             yaxis=dict(range=[0, max_ae * 1.4]),
-            plot_bgcolor="white",
+            plot_bgcolor=S.CHART_SURFACE,
             bargap=0.3,
         )
         fig_ae.add_annotation(
@@ -1126,7 +1126,7 @@ def render_linkage_section(project_key: str, key_suffix: str, title: str | None 
                            text="건수", color_discrete_sequence=[CHART_COLORS.get("purple", "#9467bd")])
             fig_b.update_traces(textposition="outside")
             fig_b.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10),
-                                 plot_bgcolor="white")
+                                 plot_bgcolor=S.CHART_SURFACE)
             st.plotly_chart(fig_b, use_container_width=True)
         else:
             st.info("집계 가능한 자식 구성이 없습니다.")
@@ -1246,7 +1246,7 @@ def render_linkage_section(project_key: str, key_suffix: str, title: str | None 
                    color_discrete_sequence=[CHART_COLORS.get("green", "#2ca02c")])
     fig_h.update_traces(textposition="outside")
     fig_h.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10),
-                         plot_bgcolor="white",
+                         plot_bgcolor=S.CHART_SURFACE,
                          xaxis_title="", yaxis_title="건수")
     st.plotly_chart(fig_h, use_container_width=True)
 
@@ -1274,7 +1274,7 @@ def _render_source_split(df_all: pd.DataFrame, key_prefix: str,
                    else px.bar(gg, x=dim, y="건수", text="건수"))
             fig.update_traces(textposition="outside")
             fig.update_layout(height=max(260, 22 * len(gg)) if orientation == "h" else 320,
-                                margin=dict(l=10, r=30, t=10, b=10), plot_bgcolor="white")
+                                margin=dict(l=10, r=30, t=10, b=10), plot_bgcolor=S.CHART_SURFACE)
             st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_{dim}_single")
         return
 
@@ -1303,7 +1303,7 @@ def _render_source_split(df_all: pd.DataFrame, key_prefix: str,
                                  color_discrete_sequence=[palette]))
             fig.update_traces(textposition="outside")
             fig.update_layout(height=max(240, 22 * len(gg)) if orientation == "h" else 300,
-                                margin=dict(l=10, r=30, t=10, b=10), plot_bgcolor="white",
+                                margin=dict(l=10, r=30, t=10, b=10), plot_bgcolor=S.CHART_SURFACE,
                                 showlegend=False)
             st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_{dim}_{src}")
 
@@ -1408,7 +1408,7 @@ def render_event_category_tab(
                                  color_discrete_map={"자사": CHART_COLORS.get("blue", "#1f77b4"),
                                                       "외주": CHART_COLORS.get("orange", "#ff7f0e")})
                     fig.update_traces(textposition="outside")
-                    fig.update_layout(height=300, plot_bgcolor="white", showlegend=False,
+                    fig.update_layout(height=300, plot_bgcolor=S.CHART_SURFACE, showlegend=False,
                                        margin=dict(l=10, r=10, t=10, b=10))
                     st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_kpi_src")
             with col_b:
@@ -1489,7 +1489,7 @@ def render_event_category_tab(
                         line=dict(color=color_map.get(str(col), "#636efa"), width=2),
                         marker=dict(size=7),
                     ))
-                fig_m.update_layout(height=320, plot_bgcolor="white",
+                fig_m.update_layout(height=320, plot_bgcolor=S.CHART_SURFACE,
                                       margin=dict(l=20, r=20, t=10, b=30),
                                       legend=dict(orientation="h", y=1.05))
                 st.plotly_chart(fig_m, use_container_width=True, key=f"{key_prefix}_trend_month")
@@ -1514,7 +1514,7 @@ def render_event_category_tab(
                                      color_discrete_map={"자사": CHART_COLORS.get("blue", "#1f77b4"),
                                                           "외주": CHART_COLORS.get("orange", "#ff7f0e")})
                     fig_s1.update_traces(textposition="inside")
-                    fig_s1.update_layout(height=320, plot_bgcolor="white",
+                    fig_s1.update_layout(height=320, plot_bgcolor=S.CHART_SURFACE,
                                            margin=dict(l=10, r=10, t=10, b=10),
                                            legend=dict(orientation="h", y=1.05))
                     st.plotly_chart(fig_s1, use_container_width=True, key=f"{key_prefix}_trend_grade")
@@ -1621,7 +1621,7 @@ def render_event_category_tab(
                                        color_discrete_sequence=[CHART_COLORS.get("blue", "#1f77b4")])
                         fig.update_traces(textposition="outside")
                         fig.update_layout(height=max(300, 22 * len(gg)),
-                                            plot_bgcolor="white",
+                                            plot_bgcolor=S.CHART_SURFACE,
                                             margin=dict(l=10, r=30, t=10, b=10))
                         st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_team_own")
                 with t_out_tab:
@@ -1636,7 +1636,7 @@ def render_event_category_tab(
                                        color_discrete_sequence=[CHART_COLORS.get("orange", "#ff7f0e")])
                         fig.update_traces(textposition="outside")
                         fig.update_layout(height=max(300, 22 * len(gg)),
-                                            plot_bgcolor="white",
+                                            plot_bgcolor=S.CHART_SURFACE,
                                             margin=dict(l=10, r=30, t=10, b=10))
                         st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_team_out")
 
@@ -1666,7 +1666,7 @@ def render_event_category_tab(
                                                       textposition="inside"))
                         fig.update_layout(barmode="stack",
                                             height=max(300, 22 * len(piv)),
-                                            plot_bgcolor="white",
+                                            plot_bgcolor=S.CHART_SURFACE,
                                             margin=dict(l=10, r=30, t=10, b=10),
                                             legend=dict(orientation="h", y=1.05))
                         st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_team_all")
@@ -1839,7 +1839,7 @@ with tab_exec:
                     pass
     fig_trend.update_layout(
         height=360, margin=dict(l=40, r=20, t=10, b=40),
-        plot_bgcolor="white",
+        plot_bgcolor=S.CHART_SURFACE,
         legend=dict(orientation="h", y=1.08, x=0.5, xanchor="center"),
     )
     fig_trend.update_xaxes(showgrid=True, gridcolor="#f0f0f0")
@@ -1892,7 +1892,7 @@ with tab_exec:
             fig_s.add_trace(go.Bar(name="완료", x=sdf["완료"], y=sdf["프로젝트"], orientation="h",
                                     marker_color=CHART_COLORS["green"], text=sdf["완료"], textposition="inside"))
             fig_s.update_layout(barmode="stack", height=360, margin=dict(l=0, r=20, t=10, b=10),
-                                 legend=dict(orientation="h", y=1.05), plot_bgcolor="white")
+                                 legend=dict(orientation="h", y=1.05), plot_bgcolor=S.CHART_SURFACE)
             st.plotly_chart(fig_s, use_container_width=True)
 
     st.divider()
@@ -1936,7 +1936,7 @@ with tab_exec:
         fig_yoy.update_layout(
             barmode="group", height=300,
             margin=dict(l=10, r=10, t=20, b=10),
-            plot_bgcolor="white",
+            plot_bgcolor=S.CHART_SURFACE,
             legend=dict(orientation="h", y=1.08),
         )
         st.plotly_chart(fig_yoy, use_container_width=True)
@@ -2081,7 +2081,7 @@ with tab_inv:
                                  x="수행 건수", y="항목", orientation="h",
                                  color_discrete_sequence=["#795548"], text="수행 건수")
                 fig_m1e.update_layout(height=300, margin=dict(l=0, r=20, t=10, b=10),
-                                       plot_bgcolor="white")
+                                       plot_bgcolor=S.CHART_SURFACE)
                 fig_m1e.update_traces(textposition="outside")
                 st.plotly_chart(fig_m1e, use_container_width=True)
 
@@ -2097,7 +2097,7 @@ with tab_inv:
                                color_discrete_map={"수행": CHART_COLORS.get("green", "#2ca02c"),
                                                     "미수행/기타": CHART_COLORS.get("gray", "#7f7f7f")})
                 fig_m.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
-                                     plot_bgcolor="white")
+                                     plot_bgcolor=S.CHART_SURFACE)
                 st.plotly_chart(fig_m, use_container_width=True)
             else:
                 st.info("5M1E 컬럼이 없습니다.")
@@ -2114,7 +2114,7 @@ with tab_inv:
                     x=MONTH_LABELS, y=[round(v) for v in mf["건수"].tolist()],
                     mode="lines+markers", line=dict(color=CHART_COLORS.get("blue", "#1f77b4"), width=2)
                 ))
-                fig.update_layout(height=280, plot_bgcolor="white",
+                fig.update_layout(height=280, plot_bgcolor=S.CHART_SURFACE,
                                     margin=dict(l=30, r=10, t=10, b=30))
                 st.plotly_chart(fig, use_container_width=True)
 
@@ -2129,7 +2129,7 @@ with tab_inv:
                 fig_t.update_traces(textposition="outside")
                 fig_t.update_layout(height=max(260, 22 * len(tm)),
                                      margin=dict(l=10, r=30, t=10, b=10),
-                                     plot_bgcolor="white")
+                                     plot_bgcolor=S.CHART_SURFACE)
                 st.plotly_chart(fig_t, use_container_width=True)
             else:
                 st.info("작성팀 컬럼 없음")
@@ -2200,7 +2200,7 @@ with tab_capa:
                     fig_g = px.bar(gd, x="구분", y="건수", text="건수",
                                     color_discrete_sequence=[CHART_COLORS.get("blue", "#1f77b4")])
                     fig_g.update_traces(textposition="outside")
-                    fig_g.update_layout(height=280, plot_bgcolor="white")
+                    fig_g.update_layout(height=280, plot_bgcolor=S.CHART_SURFACE)
                     st.plotly_chart(fig_g, use_container_width=True)
 
             st.divider()
@@ -2330,7 +2330,7 @@ with tab_change:
                         fig_d = px.bar(dd, x="구분", y="건수", text="건수",
                                         color_discrete_sequence=[CHART_COLORS.get("teal", "#17becf")])
                         fig_d.update_traces(textposition="outside")
-                        fig_d.update_layout(height=320, plot_bgcolor="white")
+                        fig_d.update_layout(height=320, plot_bgcolor=S.CHART_SURFACE)
                         st.plotly_chart(fig_d, use_container_width=True)
 
     with chg_impact:
@@ -2346,7 +2346,7 @@ with tab_change:
                                  x="건수", y="영역", orientation="h",
                                  color_discrete_sequence=[CHART_COLORS.get("teal", "#17becf")], text="건수")
                 fig_ar.update_layout(height=max(260, 22 * len(areas)),
-                                      margin=dict(l=0, r=30, t=10, b=10), plot_bgcolor="white")
+                                      margin=dict(l=0, r=30, t=10, b=10), plot_bgcolor=S.CHART_SURFACE)
                 fig_ar.update_traces(textposition="outside")
                 st.plotly_chart(fig_ar, use_container_width=True)
             else:
@@ -2369,7 +2369,7 @@ with tab_change:
                                        color_discrete_sequence=[CHART_COLORS.get("teal", "#17becf")], text="건수")
                     fig_cmo.update_layout(height=max(260, 22 * len(cmo)),
                                             margin=dict(l=0, r=30, t=10, b=10),
-                                            plot_bgcolor="white")
+                                            plot_bgcolor=S.CHART_SURFACE)
                     fig_cmo.update_traces(textposition="outside")
                     st.plotly_chart(fig_cmo, use_container_width=True)
             else:
@@ -2454,7 +2454,7 @@ with tab_complain:
                     text=[round(v) for v in cmf["건수"].tolist()], textposition="outside",
                 ))
                 fig_cm.update_layout(height=300, margin=dict(l=30, r=10, t=10, b=30),
-                                      plot_bgcolor="white")
+                                      plot_bgcolor=S.CHART_SURFACE)
                 st.plotly_chart(fig_cm, use_container_width=True)
 
     with cmp_type:
@@ -2490,7 +2490,7 @@ with tab_complain:
                         fig_r = px.bar(rd, x="결과", y="건수", text="건수",
                                         color_discrete_sequence=[CHART_COLORS.get("blue", "#1f77b4")])
                         fig_r.update_traces(textposition="outside")
-                        fig_r.update_layout(height=320, plot_bgcolor="white")
+                        fig_r.update_layout(height=320, plot_bgcolor=S.CHART_SURFACE)
                         st.plotly_chart(fig_r, use_container_width=True)
                 else:
                     st.info("처리 결과 컬럼 없음")
@@ -2518,7 +2518,7 @@ with tab_complain:
                 fig_v.update_traces(textposition="outside")
                 fig_v.update_layout(height=max(260, 22 * len(vc)),
                                       margin=dict(l=10, r=30, t=10, b=10),
-                                      plot_bgcolor="white")
+                                      plot_bgcolor=S.CHART_SURFACE)
                 st.plotly_chart(fig_v, use_container_width=True)
 
     with cmp_perf:
@@ -2572,7 +2572,7 @@ with tab_complain:
                     annotation_font_color="#e74c3c",
                 )
                 fig_h.update_layout(
-                    height=320, plot_bgcolor="white",
+                    height=320, plot_bgcolor=S.CHART_SURFACE,
                     xaxis_title="처리일(일)", yaxis_title="건수",
                     showlegend=False, margin=dict(l=10, r=10, t=30, b=10),
                 )
@@ -2614,7 +2614,7 @@ with tab_complain:
                         )
                         fig_prod.update_layout(
                             height=max(300, 28 * len(_prod_perf)),
-                            plot_bgcolor="white",
+                            plot_bgcolor=S.CHART_SURFACE,
                             xaxis_title="평균 처리일(일)",
                             margin=dict(l=10, r=60, t=20, b=10),
                         )
@@ -2744,7 +2744,7 @@ with tab_workflow:
                     )
                     fig_corr.update_traces(marker=dict(size=9, opacity=0.75))
                     fig_corr.update_layout(
-                        height=320, plot_bgcolor="white",
+                        height=320, plot_bgcolor=S.CHART_SURFACE,
                         margin=dict(l=10, r=10, t=30, b=10),
                         title=dict(text="OOS 건수 vs CAPA 완료율 (월별)", font=dict(size=13)),
                     )
@@ -2869,7 +2869,7 @@ with tab_deadline:
                 fig_gantt.update_layout(
                     height=max(300, 28 * min(40, len(_gantt_plot))),
                     margin=dict(l=10, r=20, t=30, b=10),
-                    plot_bgcolor="white", showlegend=True,
+                    plot_bgcolor=S.CHART_SURFACE, showlegend=True,
                     legend=dict(orientation="h", y=1.05),
                 )
                 st.plotly_chart(fig_gantt, use_container_width=True)

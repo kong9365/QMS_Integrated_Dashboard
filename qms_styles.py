@@ -44,6 +44,10 @@ ORANGE = SEM_WARN
 # 차트 시퀀스(네이비→블루→틸) — 12종 혼용 폐지(D1 잔여, 단일화는 commit 2에서 적용)
 CHART_SEQUENCE = [NAVY_800, ACCENT_BLUE, "#3D6AD6", "#5C8AE0", SEM_LINK, NAVY_400, "#2B8FA8", "#8FA0C8"]
 
+# 차트 배경(plot area) — 라이트 우선. 순백 대신 토큰 surface(미세 톤)로 통일.
+CHART_SURFACE = "#FCFDFF"
+CHART_GRID    = "#EAEEF6"
+
 # 타이포: 수치/관리번호/D-day 는 mono + tabular-nums (CSS 클래스 .qms-num)
 FONT_BODY = "Pretendard, -apple-system, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif"
 FONT_MONO = "'JetBrains Mono', 'Roboto Mono', 'Consolas', ui-monospace, monospace"

@@ -202,7 +202,7 @@ def render_oos_trend(
     fig.update_layout(
         height=350, margin=dict(l=40, r=20, t=30, b=40),
         legend=dict(orientation="h", y=1.08, x=1, xanchor="right"),
-        yaxis=dict(range=[0, ymax]), plot_bgcolor="white",
+        yaxis=dict(range=[0, ymax]), plot_bgcolor=CH.CHART_SURFACE,
     )
     fig.update_xaxes(showgrid=True, gridcolor="#f0f0f0")
     fig.update_yaxes(showgrid=True, gridcolor="#f0f0f0")
@@ -275,7 +275,7 @@ def render_oos_trend(
                 fig2.add_trace(go.Bar(x=all_authors, y=prev_vals, name=f"전년 ({prev_year})", marker_color=chart_colors["green"], opacity=0.8), secondary_y=False)
                 fig2.add_trace(go.Bar(x=all_authors, y=curr_vals, name=f"당년 ({primary_year})", marker_color=chart_colors["orange"], opacity=0.8), secondary_y=False)
                 fig2.add_trace(go.Scatter(x=all_authors, y=pct_change, name="전년대비", mode="lines+markers", line=dict(color=chart_colors["blue"], width=2), marker=dict(size=6)), secondary_y=True)
-                fig2.update_layout(height=380, margin=dict(l=40, r=40, t=30, b=80), barmode="group", legend=dict(orientation="h", y=1.08, x=1, xanchor="right"), plot_bgcolor="white")
+                fig2.update_layout(height=380, margin=dict(l=40, r=40, t=30, b=80), barmode="group", legend=dict(orientation="h", y=1.08, x=1, xanchor="right"), plot_bgcolor=CH.CHART_SURFACE)
                 fig2.update_yaxes(title_text="건수", secondary_y=False)
                 fig2.update_yaxes(title_text="전년대비(%)", secondary_y=True)
                 fig2.update_xaxes(tickangle=-45)
@@ -353,7 +353,7 @@ def render_oos_report(
         for idx, test_type in enumerate(pivot.index):
             vals = [int(pivot.loc[test_type, ml]) for ml in MONTH_LABELS]
             fig.add_trace(go.Bar(x=MONTH_LABELS, y=vals, name=test_type, marker_color=colors[idx % len(colors)]))
-        fig.update_layout(barmode="stack", height=400, margin=dict(l=40, r=20, t=30, b=40), legend=dict(orientation="h", y=1.1, x=0.5, xanchor="center"), plot_bgcolor="white")
+        fig.update_layout(barmode="stack", height=400, margin=dict(l=40, r=20, t=30, b=40), legend=dict(orientation="h", y=1.1, x=0.5, xanchor="center"), plot_bgcolor=CH.CHART_SURFACE)
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("시험종류·월 데이터 없음")
@@ -499,7 +499,7 @@ def render_oos_gmp(
         fig = go.Figure()
         fig.add_trace(go.Bar(x=MONTH_LABELS, y=monthly_curr, marker_color=chart_colors["bar"], text=monthly_curr, textposition="outside", textfont=dict(size=11)))
         max_val = max(monthly_curr) if monthly_curr else 1
-        fig.update_layout(height=320, margin=dict(l=30, r=10, t=10, b=30), yaxis=dict(range=[0, max_val * 1.25]), plot_bgcolor="white")
+        fig.update_layout(height=320, margin=dict(l=30, r=10, t=10, b=30), yaxis=dict(range=[0, max_val * 1.25]), plot_bgcolor=CH.CHART_SURFACE)
         st.plotly_chart(fig, use_container_width=True)
     with ae_col:
         st.markdown("##### Analyst error 감소율")
@@ -523,7 +523,7 @@ def render_oos_gmp(
                         font=dict(size=14, color=chart_colors["red"]), showarrow=False,
                     )
                 max_ae = max(ae_prev_cnt, ae_curr_cnt, 1)
-                fig_ae.update_layout(height=280, margin=dict(l=20, r=10, t=30, b=30), yaxis=dict(range=[0, max_ae * 1.4]), plot_bgcolor="white", bargap=0.3)
+                fig_ae.update_layout(height=280, margin=dict(l=20, r=10, t=30, b=30), yaxis=dict(range=[0, max_ae * 1.4]), plot_bgcolor=CH.CHART_SURFACE, bargap=0.3)
                 fig_ae.add_annotation(
                     x=0.5, y=-0.18, xref="paper", yref="paper",
                     text=f"<span style='color:gray'>■ 전년 ({prev_year})</span>  <span style='color:{chart_colors['blue']}'>■ 당년 ({primary_year})</span>",
@@ -546,7 +546,7 @@ def render_oos_gmp(
             )
             major_data.columns = ["분류", "건수"]
             fig = px.bar(major_data, x="분류", y="건수", color_discrete_sequence=[chart_colors["bar"]], text="건수")
-            fig.update_layout(height=350, margin=dict(l=30, r=10, t=10, b=30), xaxis_title="", yaxis_title="", plot_bgcolor="white")
+            fig.update_layout(height=350, margin=dict(l=30, r=10, t=10, b=30), xaxis_title="", yaxis_title="", plot_bgcolor=CH.CHART_SURFACE)
             fig.update_traces(textposition="outside")
             st.plotly_chart(fig, use_container_width=True)
     with col_minor:
@@ -558,7 +558,7 @@ def render_oos_gmp(
             )
             minor_data.columns = ["원인", "건수"]
             fig = px.bar(minor_data, x="건수", y="원인", orientation="h", color_discrete_sequence=[chart_colors["bar"]], text="건수")
-            fig.update_layout(height=350, margin=dict(l=0, r=20, t=10, b=10), yaxis_title="", xaxis_title="", plot_bgcolor="white")
+            fig.update_layout(height=350, margin=dict(l=0, r=20, t=10, b=10), yaxis_title="", xaxis_title="", plot_bgcolor=CH.CHART_SURFACE)
             fig.update_traces(textposition="outside")
             st.plotly_chart(fig, use_container_width=True)
     with col_test_type:
@@ -570,7 +570,7 @@ def render_oos_gmp(
             )
             ttype_data.columns = ["시험종류", "건수"]
             fig = px.bar(ttype_data, x="시험종류", y="건수", color_discrete_sequence=[chart_colors["dark_gray"]], text="건수")
-            fig.update_layout(height=350, margin=dict(l=30, r=10, t=10, b=60), xaxis_title="", yaxis_title="", plot_bgcolor="white")
+            fig.update_layout(height=350, margin=dict(l=30, r=10, t=10, b=60), xaxis_title="", yaxis_title="", plot_bgcolor=CH.CHART_SURFACE)
             fig.update_traces(textposition="outside")
             fig.update_xaxes(tickangle=-45)
             st.plotly_chart(fig, use_container_width=True)

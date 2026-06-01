@@ -25,7 +25,7 @@ from qms_styles import (
     # 디자인 토큰(Task 1.6 — 단일 정의 재노출)
     NAVY_900, NAVY_800, NAVY_700, NAVY_600, NAVY_400, ACCENT_BLUE,
     SEM_DANGER, SEM_WARN, SEM_OK, SEM_INFO, SEM_LINK, SEM_NEUTRAL,
-    CHART_SEQUENCE, FONT_BODY, FONT_MONO,
+    CHART_SEQUENCE, CHART_SURFACE, CHART_GRID, FONT_BODY, FONT_MONO,
     # 레이아웃/헤더/푸터
     apply_global_css,
     section_header,
@@ -57,7 +57,7 @@ __all__ = [
     "CHART_COLORS",
     "NAVY_900", "NAVY_800", "NAVY_700", "NAVY_600", "NAVY_400", "ACCENT_BLUE",
     "SEM_DANGER", "SEM_WARN", "SEM_OK", "SEM_INFO", "SEM_LINK", "SEM_NEUTRAL",
-    "CHART_SEQUENCE", "FONT_BODY", "FONT_MONO",
+    "CHART_SEQUENCE", "CHART_SURFACE", "CHART_GRID", "FONT_BODY", "FONT_MONO",
     "apply_global_css",
     "section_header",
     "render_header",
