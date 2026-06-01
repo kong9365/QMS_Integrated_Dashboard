@@ -391,68 +391,76 @@ def render_analyst_error_reduction_kpi(
 # 데이터 로딩은 전부 data_access(DA) 계층을 경유한다(Task 1.1).
 # @st.cache_data 는 UI 계층의 메모이즈로 유지(동작 동일). 디스크 캐시 키/impl 매핑과
 # 캐시 래퍼 로직은 DA.load_project 안으로 이전됨. 결과(df, err) 계약은 기존과 동일.
+#
+# [Task 1.2] 앱은 라이브 fetch 를 직접 호출하지 않는다. 수집은 refresh_job 만 담당.
+# 아래 모든 로더는 _da_load(=cache_only) 로 "마지막 정상 캐시" 만 읽는다(운영 디커플링).
+# 캐시가 없으면 (빈 DF, "no_cache") 를 반환하고 화면은 빈 상태로 graceful 렌더.
+def _da_load(project: str):
+    return DA.load_project(project, cache_only=True)
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_list_project(project: str):
-    return DA.load_project(project)
+    return _da_load(project)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_oos_data():
-    return DA.load_project("oos")
+    return _da_load("oos")
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_deviation_data():
-    return DA.load_project("deviation")
+    return _da_load("deviation")
 
 
 def fetch_devout_data_stub():
-    return DA.load_project("deviationoutsourcing")
+    return _da_load("deviationoutsourcing")
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_capa_data():
-    return DA.load_project("capa")
+    return _da_load("capa")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_change_data():
-    return DA.load_project("changemanagement")
+    return _da_load("changemanagement")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_complain_data():
-    return DA.load_project("complain")
+    return _da_load("complain")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_capaai_data():
-    return DA.load_project("capaactionitem")
+    return _da_load("capaactionitem")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_changeai_data():
-    return DA.load_project("changeactionitem")
+    return _da_load("changeactionitem")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_changeimpact_data():
-    return DA.load_project("changeimpactassessment")
+    return _da_load("changeimpactassessment")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_changeout_data():
-    return DA.load_project("changeoutsourcing")
+    return _da_load("changeoutsourcing")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_devoutai_data():
-    return DA.load_project("deviationactionitem")
+    return _da_load("deviationactionitem")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_transfer_data():
-    return DA.load_project("businesstransfer")
+    return _da_load("businesstransfer")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_validity_data():
-    return DA.load_project("validityevaluation")
+    return _da_load("validityevaluation")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_investigation_data():
-    return DA.load_project("investigation")
+    return _da_load("investigation")
 
 
 # ============================================================================
@@ -546,10 +554,12 @@ ALL_DFS = {
     "businesstransfer": df_transfer, "validityevaluation": df_validity,
 }
 
-# ─── 부모-자식 체인 연계 인덱스 구축 (필터 적용 전, 전체 그래프 기준) ───
-# 각 DF 에 부모/자식 요약 컬럼을 머지하고 ctx 를 세션에 보관한다.
+# ─── 부모-자식 체인 연계 인덱스(ctx) 구축 — 드릴다운용 ───
+# [Task 1.2] 연계 컬럼(최종 종결 여부(체인) 등)은 refresh_job 이 캐시에 미리 머지하므로
+# 앱은 무거운 컬럼 머지(build_and_apply_linkage)를 돌리지 않는다. 행 클릭 드릴다운에
+# 필요한 그래프 인덱스(ctx)만 DA.build_ctx 로 경량 재구성해 세션에 보관한다.
 try:
-    _linkage_ctx = build_and_apply_linkage(ALL_DFS)
+    _linkage_ctx = DA.build_ctx(ALL_DFS)
     st.session_state["qms_linkage_ctx"] = _linkage_ctx
 except Exception as _linkage_err:
     st.session_state["qms_linkage_ctx"] = None

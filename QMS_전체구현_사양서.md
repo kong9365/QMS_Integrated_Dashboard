@@ -98,18 +98,18 @@ qms_pro/
 [QMS PRO API]
      │  (수집은 화면과 분리)
      ▼
-[스케줄 수집 작업]  ← 기존 fetcher_service / domain / linkage / qms_fetch_uncached 재사용
+[스케줄 수집 작업 refresh_job]  ← 기존 fetcher_service / domain / linkage / qms_fetch_uncached 재사용
   · 주기적 실행(예: 1시간) · 16개 프로젝트 fetch + 연계/가중/파생 계산
-  · 결과를 로컬 SQLite(qms_data.db)에 저장 + 갱신 메타(시각/건수/성공여부) 기록
+  · 결과를 로컬 .qms_cache(parquet)에 원자적 저장 + _meta.json(시각/건수/성공여부) 기록
      │
      ▼
-[로컬 SQLite 파일]  ← 화면은 이것만 빠르게 읽음 (서버 불필요, 1인 운영 적합)
+[로컬 .qms_cache parquet]  ← 화면은 이것만 빠르게 읽음 (서버 불필요, 1인 운영 적합)
      │
      ▼
-[Streamlit 앱]  ← 항상 켜진 사내 PC에서 서비스로 상시 구동
+[Streamlit 앱]  ← 항상 켜진 사내 PC에서 서비스로 상시 구동 (cache_only, API 미접속)
 ```
 
-- **데이터 저장소**: SQLite **파일**(별도 DB 서버 불필요). 프로젝트별 테이블 또는 `project` 컬럼을 둔 단일 테이블 + `_meta` 테이블(last_refresh, rows, status).
+- **데이터 저장소**: **`.qms_cache` parquet 파일**(정정 — SQLite 미사용, 별도 DB 서버 불필요). 프로젝트별 `{key}.parquet` + `_meta.json`(last_refresh, 프로젝트별 rows/status/error). (SQLite/이력질의는 Phase 4 옵션.)
 - **수집 작업**: 독립 스크립트. UI와 같은 프로세스에서 돌리지 않는다(블로킹 방지).
 - **스케줄**: Windows Task Scheduler(온프레미스 Windows 가정). 리눅스면 cron/systemd timer.
 - **상시 구동**: Windows는 NSSM 또는 작업 스케줄러(로그온 시 시작+재시작). 리눅스면 systemd service.
@@ -160,15 +160,16 @@ qms_pro/
 - 완료 기준: 화면 동작이 0.1과 **동일**(회귀 없음). 데이터 로딩 호출이 전부 `data_access`를 거침(grep으로 확인).
 - 주의: 로직 변경 아님. 단순 경유 계층. 가중/연계 계산은 기존 함수 그대로 호출.
 
-**Task 1.2 — 스케줄 수집 작업 + SQLite 저장**
+**Task 1.2 — 스케줄 수집 작업 + 캐시 적재** (저장소 정정: SQLite → `.qms_cache` parquet 재사용)
 - 목적: QMS fetch·연계·파생 계산을 화면과 분리해 주기 실행하고 결과를 로컬에 적재.
+- **저장소 정정**: SQLite `qms_data.db` 대신 **기존 `.qms_cache` parquet 재사용**. 사유: ① 동작 중인 캐시 존재 ② APQR는 DB 스냅샷 불필요(이벤트에 날짜 보유) ③ 1인+AI 운영엔 단순 우선. SQLite/이력질의는 **Phase 4 옵션으로 보류**.
 - 작업: `qms_pro/jobs/refresh_job.py` 신설.
-  - 기존 `fetcher_service.fetch_*_impl`(16종) + `build_and_apply_linkage` + `qms_fetch_uncached`의 파생(D-day·건수기여도·자사/외주·최종 종결 여부(체인)) 호출 → 16개 프로젝트 DataFrame 생성.
-  - SQLite `qms_data.db`에 적재(프로젝트별 테이블 또는 `project` 컬럼 단일 테이블, 둘 중 단순한 쪽). `_meta` 테이블에 `last_refresh`(ISO), 프로젝트별 `rows`, `status`(ok/fail), `error` 기록.
-  - CLI 실행 가능: `python -m qms_pro.jobs.refresh_job`. 표준 logging으로 진행/오류 출력, 부분 실패해도 성공분은 커밋(원자적 테이블 교체).
-- 건드릴 파일: 신규 `jobs/refresh_job.py`; `data_access.py`를 **SQLite 읽기**로 전환.
-- 완료 기준: `python -m qms_pro.jobs.refresh_job` 1회 실행 후 `qms_data.db`에 16개 프로젝트 행 존재 + `_meta.last_refresh` 갱신. 이후 `streamlit run`이 **API를 안 건드리고** DB만으로 전 화면 렌더. QMS 차단 상태로도 화면이 뜸을 확인.
-- 주의: 가중/연계 결과 컬럼이 기존과 1:1 동일해야 함(컬럼 셋 비교로 검증). 스키마는 단순 유지.
+  - 기존 `run_all_snapshot_fetches()`(=`fetch_*_impl` 16종, 파생 D-day·건수기여도·자사/외주 포함) + `build_and_apply_linkage`(연계 컬럼 최종 종결 여부(체인) 등 in-place 머지) 호출 → 16개 프로젝트 enriched DataFrame.
+  - 결과를 `.qms_cache` 에 **원자적(temp→swap)** 기록(`qms_disk_cache.save`가 이미 제공). `_meta.json`에 `last_refresh`(ISO)·프로젝트별 `rows`·`status`(ok/fail)·`error` 기록.
+  - CLI 실행: `python -m qms_pro.jobs.refresh_job`. 표준 logging, 부분 실패해도 성공분은 저장.
+- 건드릴 파일: 신규 `jobs/refresh_job.py`; `data_access.py`에 **cache_only 읽기**(라이브 fetch 금지) + `get_refresh_meta()`를 `_meta.json` 연동; 앱은 `cache_only=True`로 캐시만 읽고 런타임 linkage 컬럼 머지 제거(드릴다운 ctx만 경량 재구성).
+- 완료 기준: `python -m qms_pro.jobs.refresh_job` 1회 실행 후 `.qms_cache`에 16개 프로젝트 + `_meta.json.last_refresh` 갱신. 이후 `streamlit run`이 **API를 안 건드리고** 캐시만으로 전 화면 렌더. **QMS 차단 상태로도 화면이 뜸을 확인**.
+- 주의: 가중/연계 결과 컬럼이 기존과 1:1 동일해야 함(within-run round-trip 무손실 검증). BASELINE 절대 총계와의 1:1 비교는 금지(원천 라이브 변동).
 
 **Task 1.3 — 갱신 신뢰성 & 화면 표기**
 - 작업: 화면 상단(또는 종합 현황)에 `_meta` 기반 "마지막 갱신 시각 / 수집 상태 16/16" 표기. 수집 실패 프로젝트가 있으면 경고 배지. 수동 "지금 갱신" 버튼은 `refresh_job`을 트리거(동기 호출은 길면 비권장 → 우선 "다음 스케줄 안내"로 단순화 가능).
