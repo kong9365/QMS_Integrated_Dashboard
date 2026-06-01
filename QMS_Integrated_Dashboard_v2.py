@@ -49,6 +49,7 @@ from qms_pro.services.fetcher_service import (
 )
 
 from qms_pro.services.qms_client import API_BASE_URL
+from qms_pro.services import data_access as DA  # 데이터 읽기 단일 진입 계층(Task 1.1)
 
 # ============================================================================
 # 런타임 예외 노이즈 억제 (탭 닫기·새로고침 시 Tornado WebSocket 잡음)
@@ -384,86 +385,74 @@ def render_analyst_error_reduction_kpi(
 
 
 # ============================================================================
-# 데이터 수집 함수 (캐시 래퍼 — 본문은 qms_fetch_uncached.py)
+# 데이터 수집 함수 (캐시 래퍼 — 디스크 캐시/impl 매핑은 data_access 로 이전)
 # ============================================================================
 
-def _with_disk_cache(key: str, fn):
-    """디스크 캐시 우선, 미스 시 fn() 실행 후 parquet 저장.
-
-    Streamlit 메모리 캐시(@st.cache_data) 미스 시에도 디스크에서 즉시 복구.
-    사용자 간 공유로 두 번째 사용자부터는 < 1초 로드.
-    """
-    cached = DC.load(key)
-    if cached is not None:
-        return cached
-    df, err = fn()
-    if err is None:
-        DC.save(key, df)
-    return df, err
-
-
+# 데이터 로딩은 전부 data_access(DA) 계층을 경유한다(Task 1.1).
+# @st.cache_data 는 UI 계층의 메모이즈로 유지(동작 동일). 디스크 캐시 키/impl 매핑과
+# 캐시 래퍼 로직은 DA.load_project 안으로 이전됨. 결과(df, err) 계약은 기존과 동일.
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_list_project(project: str):
-    return _with_disk_cache(f"list_{project}", lambda: fetch_list_project_impl(project))
+    return DA.load_project(project)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_oos_data():
-    return _with_disk_cache("oos", fetch_oos_data_impl)
+    return DA.load_project("oos")
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_deviation_data():
-    return _with_disk_cache("deviation", fetch_deviation_data_impl)
+    return DA.load_project("deviation")
 
 
 def fetch_devout_data_stub():
-    return fetch_devout_data_stub_impl()
+    return DA.load_project("deviationoutsourcing")
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_capa_data():
-    return _with_disk_cache("capa", fetch_capa_data_impl)
+    return DA.load_project("capa")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_change_data():
-    return _with_disk_cache("changemanagement", fetch_change_data_impl)
+    return DA.load_project("changemanagement")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_complain_data():
-    return _with_disk_cache("complain", fetch_complain_data_impl)
+    return DA.load_project("complain")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_capaai_data():
-    return _with_disk_cache("capaactionitem", fetch_capaai_data_impl)
+    return DA.load_project("capaactionitem")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_changeai_data():
-    return _with_disk_cache("changeactionitem", fetch_changeai_data_impl)
+    return DA.load_project("changeactionitem")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_changeimpact_data():
-    return _with_disk_cache("changeimpactassessment", fetch_changeimpact_data_impl)
+    return DA.load_project("changeimpactassessment")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_changeout_data():
-    return _with_disk_cache("changeoutsourcing", fetch_changeout_data_impl)
+    return DA.load_project("changeoutsourcing")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_devoutai_data():
-    return _with_disk_cache("deviationactionitem", fetch_devoutai_data_impl)
+    return DA.load_project("deviationactionitem")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_transfer_data():
-    return _with_disk_cache("businesstransfer", fetch_transfer_data_impl)
+    return DA.load_project("businesstransfer")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_validity_data():
-    return _with_disk_cache("validityevaluation", fetch_validity_data_impl)
+    return DA.load_project("validityevaluation")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_investigation_data():
-    return _with_disk_cache("investigation", fetch_investigation_data_impl)
+    return DA.load_project("investigation")
 
 
 # ============================================================================
