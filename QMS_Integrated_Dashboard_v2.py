@@ -26,6 +26,7 @@ from plotly.subplots import make_subplots
 
 from qms_pro.pages import oos_panels
 from qms_pro.ui import theme as S
+from qms_pro.ui import components as C  # 표준 컴포넌트 라이브러리(Task 3.1)
 from qms_pro.ui import filters as UIF
 
 from qms_pro.config.project_meta import PROJECT_META
@@ -307,7 +308,7 @@ def _to_excel_safe_df(df: pd.DataFrame) -> pd.DataFrame:
 
 # [Task 1.5 D1] render_header/render_footer 중복 래퍼 제거 — qms_styles 단일 소스를
 # S.render_header / S.render_footer 로 직접 호출(아래 모든 호출부를 S. 접두로 통일).
-# [Task 1.6 commit5] kpi_gauge(반원 게이지) 제거 → 경영진 화면은 S.kpi_stat_card(진척 바) 사용.
+# [Task 1.6 commit5] kpi_gauge(반원 게이지) 제거 → 경영진 화면은 C.kpi_stat_card(진척 바) 사용.
 
 
 def render_analyst_error_reduction_kpi(
@@ -891,17 +892,12 @@ def render_raw_data_section(
         else:
             other = parser_cols
         disp = avail + other
-        _col_cfg = {
-            "관리번호": st.column_config.NumberColumn(format="%d"),
-            "D-day": st.column_config.NumberColumn(format="%d일"),
-        }
-        if "건수기여도" in disp:
-            _col_cfg["건수기여도"] = st.column_config.NumberColumn("건수기여도", format="%.5f")
+        # [Task 3.1] 표준 데이터 테이블(모노 관리번호/D-day/건수기여도 자동). 발견일시만 override.
+        _col_cfg = {}
         if "발견일시" in disp:
             _col_cfg["발견일시"] = st.column_config.DateColumn("발견일시", format="YYYY-MM-DD")
         _raw_disp = _to_arrow_safe_df(raw_all[disp])
-        st.dataframe(_raw_disp, use_container_width=True, height=500, hide_index=True,
-                     column_config=_col_cfg)
+        C.data_table(_raw_disp, height=500, column_config=_col_cfg or None)
         st.caption(
             f"표시 칼럼: 우선 {len(avail)} · 파서 {len(parser_cols)}"
             + (f" · _ext_* {len(ext_cols)}" if include_raw else "")
@@ -1080,16 +1076,12 @@ def _linkage_drawer_entry(df: pd.DataFrame, key_suffix: str, title: str | None =
     if df is None or df.empty or "관리번호" not in df.columns:
         st.info("연계를 조회할 데이터가 없습니다.")
         return
-    prnos = (
-        df.drop_duplicates(subset=["관리번호"])["관리번호"].astype(str).tolist()
+    prnos = df.drop_duplicates(subset=["관리번호"])["관리번호"].astype(str).tolist()
+    # [Task 3.1] 선택+🔗 패턴을 표준 컴포넌트로 통일(중복 제거).
+    C.linkage_drilldown(
+        prnos, key=f"drawer_{key_suffix}", on_select=show_linkage_drawer,
+        caption="관리번호를 선택하면 부모-자식 체인과 최종 종결 여부(체인)·지연일을 모달로 봅니다.",
     )
-    st.caption("관리번호를 선택하면 부모-자식 체인과 최종 종결 여부(체인)·지연일을 모달로 봅니다.")
-    c_sel, c_btn = st.columns([3, 1])
-    with c_sel:
-        sel = st.selectbox("관리번호", prnos, key=f"linkdrawer_sel_{key_suffix}", label_visibility="collapsed")
-    with c_btn:
-        if st.button("🔗 연계 보기", key=f"linkdrawer_btn_{key_suffix}", use_container_width=True):
-            show_linkage_drawer(sel)
 
 
 # ============================================================================
@@ -1158,18 +1150,13 @@ def render_closure_check(ws_id: str, dfs: dict, key_suffix: str):
     allhit = pd.concat(frames, ignore_index=True)
     _disp_cols = [c for c in ["관리번호", "프로젝트", "제목", "진행상태", "이상 케이스 플래그", "자식 미종결 수"] if c in allhit.columns]
     st.caption("행의 관리번호를 선택해 🔗 연계 드릴다운으로 체인을 점검하세요.")
-    st.dataframe(
+    # [Task 3.1] 표준 데이터 테이블 + 표준 드릴다운(중복 제거).
+    C.data_table(
         allhit[_disp_cols].rename(columns={"이상 케이스 플래그": "점검 케이스"}),
-        use_container_width=True, hide_index=True,
+        mono_extra=["자식 미종결 수"],
     )
     _prnos = allhit["관리번호"].astype(str).tolist() if "관리번호" in allhit.columns else []
-    if _prnos:
-        c_s, c_b = st.columns([3, 1])
-        with c_s:
-            _sel = st.selectbox("점검할 관리번호", _prnos, key=f"closure_sel_{key_suffix}", label_visibility="collapsed")
-        with c_b:
-            if st.button("🔗 연계 보기", key=f"closure_btn_{key_suffix}", use_container_width=True):
-                show_linkage_drawer(_sel)
+    C.linkage_drilldown(_prnos, key=f"closure_{key_suffix}", on_select=show_linkage_drawer)
 
 
 def render_linkage_section(project_key: str, key_suffix: str, title: str | None = None,
@@ -1757,8 +1744,7 @@ def render_event_category_tab(
                 show_cols = [c for c in ["관리번호", "자사/외주", "제목", "재발여부", "작성팀",
                                            "이상발생 원인", "발생 유형", "발생 세부유형"]
                              if c in rf.columns]
-                st.dataframe(rf[show_cols].head(80), use_container_width=True,
-                              hide_index=True, height=320)
+                C.data_table(rf[show_cols].head(80), height=320)
 
     # ─── 팀별·외주 (자사/외주 분리) ─────────────────────────────────────
     with tab_team:
@@ -1803,8 +1789,7 @@ def render_event_category_tab(
                                 st.caption("Major 일탈 발생 외주업체")
                                 disp_cols = [c for c in ["관리번호", "위탁업체", "일탈 등급", "제목", "접수월"]
                                              if c in maj.columns]
-                                st.dataframe(maj[disp_cols], use_container_width=True,
-                                              hide_index=True, height=220)
+                                C.data_table(maj[disp_cols], height=220)
                 with t_all_tab:
                     if "작성팀" in ftab.columns:
                         gg = _wgroupby(ftab, ["작성팀", "자사/외주"], name="건수")
@@ -1981,15 +1966,15 @@ if _render_tab("exec"):
     overdue_total = sum(weighted_metric_overdue(df_p) for df_p in F.values())
     k1, k2, k3, k4 = st.columns(4)
     with k1:
-        S.kpi_stat_card(capa_rate, KPI_TARGETS["CAPA 이행률"], "CAPA 이행률")
+        C.kpi_stat_card(capa_rate, KPI_TARGETS["CAPA 이행률"], "CAPA 이행률")
     with k2:
-        S.kpi_stat_card(change_rate, KPI_TARGETS["변경 완료율"], "변경 완료율")
+        C.kpi_stat_card(change_rate, KPI_TARGETS["변경 완료율"], "변경 완료율")
     with k3:
         _cval = avg_complaint_days if avg_complaint_days is not None else 0
-        S.kpi_stat_card(_cval, KPI_TARGETS["불만 평균처리일"], "불만 평균처리일", suffix="일", inverse=True)
+        C.kpi_stat_card(_cval, KPI_TARGETS["불만 평균처리일"], "불만 평균처리일", suffix="일", inverse=True)
     with k4:
         # 기한초과는 '낮을수록 좋음' → inverse, 목표 0(초과 없음). 진척바는 0 기준.
-        S.kpi_stat_card(round(overdue_total), 0, "기한초과(전사)", suffix="건", inverse=True, max_val=max(round(overdue_total), 1))
+        C.kpi_stat_card(round(overdue_total), 0, "기한초과(전사)", suffix="건", inverse=True, max_val=max(round(overdue_total), 1))
 
     # · 이상신호 3 카드: 종결순서 점검(2.5 요약) / 재발 / Analyst error
     st.caption("전사 이상신호")
@@ -2000,9 +1985,9 @@ if _render_tab("exec"):
         _a, _b = _ws_closure_counts(_wsid, F)
         _ov_pre += _a; _ov_miss += _b
     with _sg1:
-        st.metric("🧭 종결순서 점검", f"{_ov_pre + _ov_miss}건",
-                  help=f"선종결 의심 {_ov_pre} · 종결처리 누락 {_ov_miss} (이상 케이스 플래그 2종 합)")
-        st.caption(f"선종결 {_ov_pre} · 누락 {_ov_miss}")
+        # [Task 3.1] 이상신호 = 표준 signal_card(의미색 좌측 강조). 값/로직 불변.
+        C.signal_card("🧭 종결순서 점검", f"{_ov_pre + _ov_miss}건", tone="danger", icon="",
+                      sub=f"선종결 의심 {_ov_pre} · 종결처리 누락 {_ov_miss} (플래그 2종 합)")
         if st.button("점검하러 가기 →", key="sig_jump_closure", use_container_width=True):
             st.session_state["_ws_jump_target"] = "QA 품질운영"
             st.rerun()
@@ -2014,14 +1999,18 @@ if _render_tab("exec"):
         if _rdf is not None and not _rdf.empty and "재발여부" in _rdf.columns:
             _rb = _rdf.drop_duplicates(subset=["관리번호"]) if "관리번호" in _rdf.columns else _rdf
             _recur_n += int((_rb["재발여부"].notna() & (_rb["재발여부"].astype(str).str.strip() != "") & (_rb["재발여부"].astype(str).str.strip() != "아니요")).sum())
-    _sg2.metric("↻ 재발", f"{_recur_n}건", help="일탈(자사+외주) 재발여부 표기 건수(빈값·'아니요' 제외)")
+    with _sg2:
+        C.signal_card("↻ 재발", f"{_recur_n}건", tone="warn", icon="",
+                      sub="일탈(자사+외주) 재발여부 표기 건수 · 빈값·'아니요' 제외")
     # Analyst error = 이상발생 원인=="Analyst error" 건수기여도(oos+dev)
     _ae_df = pd.concat([d for d in (foos, fdev) if not d.empty], ignore_index=True) if any(not d.empty for d in (foos, fdev)) else pd.DataFrame()
     _ae_n = 0
     if not _ae_df.empty and "이상발생 원인" in _ae_df.columns:
         _ae_hit = _ae_df[_ae_df["이상발생 원인"] == "Analyst error"]
         _ae_n = round(_ae_hit["건수기여도"].sum()) if "건수기여도" in _ae_hit.columns else len(_ae_hit)
-    _sg3.metric("🔬 Analyst error", f"{_ae_n}건", help="이상발생 원인='Analyst error' 건수기여도 합(OOS+일탈)")
+    with _sg3:
+        C.signal_card("🔬 Analyst error", f"{_ae_n}건", tone="info", icon="",
+                      sub="이상발생 원인='Analyst error' 건수기여도 합(OOS+일탈)")
 
     st.divider()
 
@@ -2080,23 +2069,16 @@ if _render_tab("exec"):
             _team_col = "작성팀" if "작성팀" in _oa.columns else None
             _cols = ["프로젝트"] + [c for c in ["관리번호", "제목", _team_col, "기한일", "D-day", "진행상태"] if c and c in _oa.columns]
             _top = _oa.sort_values("D-day").head(20)
-            st.dataframe(_top[_cols], use_container_width=True, hide_index=True, height=300,
-                         column_config={"D-day": st.column_config.NumberColumn("D-day", format="%d일")})
-            # 행 드릴다운: 관리번호 선택 → 2.4 드로어
+            # [Task 3.1] 표준 데이터 테이블(상태 Pill·모노 관리번호/D-day) + 표준 드릴다운(중복 제거).
+            C.data_table(_top[_cols], status=True, height=300)
             _prnos = _top["관리번호"].astype(str).tolist() if "관리번호" in _top.columns else []
-            if _prnos:
-                _cs, _cb = st.columns([3, 1])
-                with _cs:
-                    _sel = st.selectbox("관리번호", _prnos, key="ov_overdue_sel", label_visibility="collapsed")
-                with _cb:
-                    if st.button("🔗 연계 보기", key="ov_overdue_btn", use_container_width=True):
-                        show_linkage_drawer(_sel)
+            C.linkage_drilldown(_prnos, key="ov_overdue", on_select=show_linkage_drawer)
         else:
             st.success("기한 초과 항목이 없습니다.")
     with d2:
         st.caption("🧭 종결순서 점검 — 전사 요약")
-        st.metric("선종결 의심", f"{_ov_pre}건", help=_LINKAGE_FLAG_HELP[_FLAG_PRE])
-        st.metric("종결처리 누락", f"{_ov_miss}건", help=_LINKAGE_FLAG_HELP[_FLAG_MISS])
+        C.signal_card("선종결 의심", f"{_ov_pre}건", tone="warn", sub=_LINKAGE_FLAG_HELP[_FLAG_PRE])
+        C.signal_card("종결처리 누락", f"{_ov_miss}건", tone="danger", sub=_LINKAGE_FLAG_HELP[_FLAG_MISS])
         st.caption("상세는 각 워크스페이스 하단 '종결순서 점검' 패널에서 (소유 레코드 기준).")
 
     st.divider()
@@ -2377,13 +2359,10 @@ if _render_tab("capa"):
             S.section_header("CAPA 상세 목록")
             capa_disp = [c for c in ["관리번호", "제목", "등록자", "기한일", "진행상태",
                                       "D-day", "CAPA 구분", "사유"] if c in fcapa.columns]
-            st.dataframe(
+            # [Task 3.1] 표준 데이터 테이블(상태 Pill·모노 관리번호/D-day).
+            C.data_table(
                 fcapa[capa_disp].sort_values("D-day") if "D-day" in fcapa.columns else fcapa[capa_disp],
-                use_container_width=True, hide_index=True, height=360,
-                column_config={
-                    "D-day": st.column_config.NumberColumn("D-day", format="%d일"),
-                    "관리번호": st.column_config.NumberColumn("관리번호", format="%d"),
-                },
+                status=True, height=360,
             )
 
     with capa_ai:
@@ -2397,7 +2376,7 @@ if _render_tab("capa"):
         # [Task 2.6] 반원 게이지 제거 → 진척 바 KPI 스탯 카드(토큰 일관). 게이지 잔존 0.
         S.section_header("모니터링AI 이행률")
         ai_rate = safe_pct(ai_d, ai_t)
-        S.kpi_stat_card(round(ai_rate, 1), 80, "모니터링AI 이행률")
+        C.kpi_stat_card(round(ai_rate, 1), 80, "모니터링AI 이행률")
 
     with capa_deadline:
         S.section_header("기한 초과·지연 현황")
@@ -2413,9 +2392,8 @@ if _render_tab("capa"):
             all_over = pd.concat(overdue_frames, ignore_index=True)
             disp = [c for c in ["구분", "관리번호", "제목", "기한일", "D-day", "등록자", "진행상태"]
                     if c in all_over.columns]
-            st.dataframe(all_over[disp].sort_values("D-day"),
-                         use_container_width=True, hide_index=True, height=380,
-                         column_config={"D-day": st.column_config.NumberColumn("D-day", format="%d일")})
+            # [Task 3.1] 표준 데이터 테이블(상태 Pill — 기한초과 맥락이라 대부분 🔴 초과).
+            C.data_table(all_over[disp].sort_values("D-day"), status=True, height=380)
         else:
             st.success("기한 초과 항목이 없습니다.")
 
@@ -3042,9 +3020,8 @@ if _render_tab("deadline"):
         S.section_header("기한 임박 상세 목록 (D-day ≤ 7일)", "⚠️")
         urgent = dd_all[dd_all["D-day"] <= 7].sort_values("D-day")
         if not urgent.empty:
-            st.dataframe(urgent.head(30), use_container_width=True, hide_index=True, height=400,
-                         column_config={"D-day": st.column_config.NumberColumn("D-day", format="%d일"),
-                                        "관리번호": st.column_config.NumberColumn("관리번호", format="%d")})
+            # [Task 3.1] 표준 데이터 테이블(상태 Pill·모노 관리번호/D-day).
+            C.data_table(urgent.head(30), status=True, height=400)
         else:
             st.success("임박한 기한 항목이 없습니다.")
     else:
@@ -3080,9 +3057,9 @@ if _render_tab("settings"):
                 "상세수집": "✅" if PROJECT_META[pk]["detail"] else "목록만",
                 "상태": "🟢 정상" if n > 0 else "⚪ 빈 데이터",
             })
-        st.dataframe(
+        # [Task 3.1] 표준 데이터 테이블(건수 컬럼은 호출부 '%d건' override). '상태' 컬럼은 수집상태 라벨.
+        C.data_table(
             pd.DataFrame(status_data),
-            use_container_width=True, hide_index=True,
             column_config={
                 "기한 초과": st.column_config.NumberColumn("기한 초과", format="%d건"),
                 "수집 건수": st.column_config.NumberColumn("수집 건수", format="%d건"),
