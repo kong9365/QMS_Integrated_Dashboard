@@ -73,6 +73,21 @@ def status_badge(state: str) -> str:
     return badge(state, meta["badge"]) if meta else badge(state or "—", "blue")
 
 
+# ── lot 처분(PASS/HOLD) Pill — 4종 고정(의미색 고정). lot 디스포지션 전용(Task 3.3b). ──
+DISPOSITION_PILL: dict[str, dict] = {
+    "적합":  {"emoji": "🟢", "color": T.SEM_OK},
+    "보류":  {"emoji": "🟠", "color": T.SEM_WARN},
+    "부적합": {"emoji": "🔴", "color": T.SEM_DANGER},
+    "미상":  {"emoji": "⚪", "color": T.SEM_NEUTRAL},
+}
+
+
+def disposition_pill_label(state: str) -> str:
+    """lot 처분 표 셀용 — '🟢 적합' 형태(이모지 프리픽스)."""
+    meta = DISPOSITION_PILL.get(state)
+    return f"{meta['emoji']} {state}" if meta else (state or "")
+
+
 def _completed_mask(df: pd.DataFrame) -> pd.Series:
     """행 단위 완료 마스크 — domain.metrics 와 **동일 정의**(키워드 우선, 없으면 완료여부=='C').
 
@@ -253,6 +268,8 @@ __all__ = [
     "status_badge",
     "derive_status",
     "status_label_series",
+    "DISPOSITION_PILL",
+    "disposition_pill_label",
     # 연계
     "linkage_drilldown",
     # 재노출(단일 출처)

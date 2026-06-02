@@ -56,6 +56,12 @@ from qms_pro.domain.attribution import (  # 품목/lot 체인 귀속 파생(Task
     attribute_dataframes as _attribute_dataframes,
     DERIVED_COLS as _ATTR_DERIVED_COLS,
 )
+from qms_pro.domain.disposition import (  # lot 처분(PASS/HOLD) 판정(Task 3.3b)
+    judge_lot_dispositions as _judge_lot_dispositions,
+    disposition_distribution as _disposition_distribution,
+    LOT_COL as _DISP_LOT_COL,
+    DISP_ORDER as _DISP_ORDER,
+)
 
 # ============================================================================
 # 런타임 예외 노이즈 억제 (탭 닫기·새로고침 시 Tornado WebSocket 잡음)
@@ -1904,7 +1910,7 @@ _WORKSPACES = [
         [("dev", "일탈"), ("incident", "인시던트"), ("complain", "고객불만")]),
     ("actions",  "조치·변경",     "arrow-repeat",
         [("capa", "CAPA·Action"), ("change", "변경관리")]),
-    ("product",  "제품·배치품질", "box-seam",          [("product_new", "제품·배치품질")]),
+    ("product",  "제품·배치품질", "box-seam",          [("product_apqr", "APQR"), ("product_lot", "lot 처분")]),
     ("alerts",   "알림·모니터링", "bell",              [("alerts_new", "알림·모니터링")]),
     ("data",     "데이터·설정",   "table",             [("settings", "설정")]),
 ]
@@ -3281,9 +3287,9 @@ if _active_ws in _WS_OWNED_PROJECTS:
 #  · 알림·모니터링: 룰 기반 알림 센터 — Task 3.4 (현 설정탭 알림설정이 모태)
 # 레일에는 지금 노출하되, 본문은 "준비 중 + 예정 내용" 안내로 자리만 잡는다.
 # ============================================================================
-if _render_tab("product_new"):
+if _render_tab("product_apqr"):
     S.render_header("제품·배치 품질", "APQR · 품목 × 연도")
-    st.caption("※ 모니터링 보조 — 정식 출하 판정 시스템이 아닙니다. lot 디스포지션(PASS/HOLD)은 후속(Task 3.3b).")
+    st.caption("※ 모니터링 보조 — 정식 출하 판정 시스템이 아닙니다. (lot 처분 PASS/HOLD 는 상단 'lot 처분' 탭)")
     st.divider()
 
     _ATTR_NAME = "품목명_귀속"
@@ -3415,6 +3421,124 @@ if _render_tab("product_new"):
                                 caption="관리번호 선택 → 🔗 로 부모-자식 체인·종결여부 추적")
         else:
             S.empty_state("선택한 품목의 이벤트가 없습니다.")
+
+    S.render_footer()
+
+
+# ============================================================================
+# 제품·배치품질 — lot 처분(PASS/HOLD) sub-view (Task 3.3b)
+#   lot 키=제조번호_귀속(3.3a attribution). 판정=disposition.judge_lot_dispositions
+#   (적합/보류/부적합/미상, 최악 우선). 표준 컴포넌트만 사용. 건수=건수기여도 합.
+# ============================================================================
+if _render_tab("product_lot"):
+    S.render_header("제품·배치 품질", "lot 처분 — 출하 전 확인 (PASS/HOLD 보조)")
+    st.caption("※ 모니터링 보조 — 정식 출하 판정 시스템이 아닙니다. 최악 우선: 부적합 > 보류 > 적합 > 미상.")
+    st.divider()
+
+    _LOT_ATTR = "제조번호_귀속"
+
+    # ════════════════════════════════════════════════════════════════════
+    # ① lot 커버리지(전체 기준) + 처분 분포(선택 연도)
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("lot 커버리지 · 처분 분포", "①")
+    # 커버리지(전체 데이터, 고유 관리번호): lot 보유(자체/상속)·미상. 자체=원본 제조번호 보유.
+    _lot_total = _lot_self = _lot_none = 0
+    _lseen: set[str] = set()
+    for _k, _d in ALL_DFS.items():
+        if _d is None or _d.empty or "관리번호" not in _d.columns or _LOT_ATTR not in _d.columns:
+            continue
+        _b = _d.drop_duplicates(subset=["관리번호"])
+        _prnos = _b["관리번호"].astype(str)
+        _lots = _b[_LOT_ATTR].astype(str)
+        _origs = _b["제조번호"].astype(str) if "제조번호" in _b.columns else None
+        for _i in range(len(_b)):
+            _p = _prnos.iat[_i]
+            if _p in _lseen:
+                continue
+            _lseen.add(_p)
+            _lv = _lots.iat[_i].strip()
+            if _lv and _lv.lower() not in ("nan", "none"):
+                _lot_total += 1
+                _ov = _origs.iat[_i].strip() if _origs is not None else ""
+                if _ov and _ov.lower() not in ("nan", "none"):
+                    _lot_self += 1
+            else:
+                _lot_none += 1
+    _lot_inh = _lot_total - _lot_self
+
+    _disp = _judge_lot_dispositions(F)             # 선택 연도(글로벌 필터) 기준
+    _dist = _disposition_distribution(_disp)
+    _r1 = st.columns(2)
+    with _r1[0]:
+        C.signal_card("lot 보유 (전체)", f"{_lot_total:,}건", tone="info", icon="",
+                      sub=f"자체보유 {_lot_self:,} · 상속(체인) {_lot_inh:,}")
+    with _r1[1]:
+        C.signal_card("lot 미상 (전체)", f"{_lot_none:,}건", tone="neutral", icon="",
+                      sub="제조번호 없음 — 처분 집계 제외(추측 금지)")
+    _r2 = st.columns(4)
+    _disp_tone = {"부적합": "danger", "보류": "warn", "적합": "ok", "미상": "neutral"}
+    _disp_sub = {"부적합": "OOS 기준일탈 부적합", "보류": "미종결 존재",
+                 "적합": "전 종결 + 적합", "미상": "판정 정보 부족"}
+    for _i, _lab in enumerate(_DISP_ORDER):
+        with _r2[_i]:
+            C.signal_card(f"{_lab} lot", f"{_dist.get(_lab, 0)}", tone=_disp_tone[_lab], icon="",
+                          sub=_disp_sub[_lab])
+    st.caption("커버리지=전체 데이터 기준 · 처분 분포·표=선택 연도(글로벌 필터) 이벤트 기준. "
+               "판정 소스: OOS `기준 일탈 최종 결과`(적합/부적합) + `최종 종결 여부(체인)`. lot 미상은 처분 집계 제외.")
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════
+    # ② lot 처분 표 (행=제조번호, 처분 Pill·품목명·관련건수·OOS수·미종결수)
+    # ════════════════════════════════════════════════════════════════════
+    _yr_l = ", ".join(str(y) for y in selected_years) if selected_years else "전체"
+    S.section_header(f"lot 처분 표 — {_yr_l}", "②")
+    if _disp.empty:
+        S.empty_state("선택한 연도에 lot(제조번호) 보유 이벤트가 없습니다.")
+    else:
+        _disp_show = _disp.copy()
+        _disp_show["처분"] = _disp_show["처분"].map(C.disposition_pill_label)
+        _disp_show = _disp_show.rename(columns={"제조번호_귀속": "제조번호(lot)", "품목명_귀속": "품목명"})
+        st.caption(f"lot {len(_disp_show)}개 · 관련건수=건수기여도 합 · 처분 최악 우선(부적합>보류>적합>미상) 정렬.")
+        C.data_table(
+            _disp_show, height=420,
+            column_config={
+                "처분": st.column_config.TextColumn("처분", help="적합🟢/보류🟠/부적합🔴/미상⚪", width="small"),
+                **{_c: st.column_config.NumberColumn(_c, format="%d") for _c in ["관련건수", "OOS수", "미종결수"]},
+            },
+        )
+
+        st.divider()
+
+        # ════════════════════════════════════════════════════════════════
+        # ③ lot 드릴다운 — 관련 이벤트 목록(상태 Pill·결과·종결) + 🔗 연계 추적
+        # ════════════════════════════════════════════════════════════════
+        S.section_header("lot 드릴다운 — 관련 이벤트", "③")
+        _sel_lot = st.selectbox("제조번호(lot) 선택", _disp[_DISP_LOT_COL].tolist(), key="lot_disp_sel")
+        _LEV_COLS = ["관리번호", "프로젝트", "제목", "작성팀", "기한일", "D-day", "진행상태",
+                     "완료여부", "기준 일탈 최종 결과", "최종 종결 여부(체인)"]
+        _lev_frames = []
+        for _k, _d in F.items():
+            if _d is None or _d.empty or _LOT_ATTR not in _d.columns:
+                continue
+            _sub = _d[_d[_LOT_ATTR].astype(str).str.strip() == str(_sel_lot)]
+            if not _sub.empty:
+                _lev_frames.append(_sub[[c for c in _LEV_COLS if c in _sub.columns]].copy())
+        if _lev_frames:
+            import warnings as _w2
+            with _w2.catch_warnings():
+                _w2.simplefilter("ignore", FutureWarning)
+                _lev = pd.concat(_lev_frames, ignore_index=True)
+            _lev_cols = [c for c in ["관리번호", "프로젝트", "제목", "작성팀", "기한일", "D-day",
+                                     "진행상태", "기준 일탈 최종 결과", "최종 종결 여부(체인)"] if c in _lev.columns]
+            _lev_disp = _lev[_lev_cols].sort_values("D-day") if "D-day" in _lev.columns else _lev[_lev_cols]
+            st.caption(f"lot **{_sel_lot}** — 관련 이벤트 {len(_lev)}건(선택 연도)")
+            C.data_table(_lev_disp, status=True, height=320)
+            _lev_prnos = _lev["관리번호"].astype(str).tolist() if "관리번호" in _lev.columns else []
+            C.linkage_drilldown(_lev_prnos, key="lot_disp", on_select=show_linkage_drawer,
+                                caption="관리번호 선택 → 🔗 로 부모-자식 체인·종결여부 추적")
+        else:
+            S.empty_state("선택한 lot 의 관련 이벤트가 없습니다.")
 
     S.render_footer()
 
