@@ -26,6 +26,7 @@ from plotly.subplots import make_subplots
 
 from qms_pro.pages import oos_panels
 from qms_pro.ui import theme as S
+from qms_pro.ui import components as C  # 표준 컴포넌트 라이브러리(Task 3.1)
 from qms_pro.ui import filters as UIF
 
 from qms_pro.config.project_meta import PROJECT_META
@@ -51,6 +52,16 @@ from qms_pro.services.fetcher_service import (
 
 from qms_pro.services.qms_client import API_BASE_URL
 from qms_pro.services import data_access as DA  # 데이터 읽기 단일 진입 계층(Task 1.1)
+from qms_pro.domain.attribution import (  # 품목/lot 체인 귀속 파생(Task 3.2b, 배선 3.3a)
+    attribute_dataframes as _attribute_dataframes,
+    DERIVED_COLS as _ATTR_DERIVED_COLS,
+)
+from qms_pro.domain.disposition import (  # lot 처분(PASS/HOLD) 판정(Task 3.3b)
+    judge_lot_dispositions as _judge_lot_dispositions,
+    disposition_distribution as _disposition_distribution,
+    LOT_COL as _DISP_LOT_COL,
+    DISP_ORDER as _DISP_ORDER,
+)
 
 # ============================================================================
 # 런타임 예외 노이즈 억제 (탭 닫기·새로고침 시 Tornado WebSocket 잡음)
@@ -307,7 +318,7 @@ def _to_excel_safe_df(df: pd.DataFrame) -> pd.DataFrame:
 
 # [Task 1.5 D1] render_header/render_footer 중복 래퍼 제거 — qms_styles 단일 소스를
 # S.render_header / S.render_footer 로 직접 호출(아래 모든 호출부를 S. 접두로 통일).
-# [Task 1.6 commit5] kpi_gauge(반원 게이지) 제거 → 경영진 화면은 S.kpi_stat_card(진척 바) 사용.
+# [Task 1.6 commit5] kpi_gauge(반원 게이지) 제거 → 경영진 화면은 C.kpi_stat_card(진척 바) 사용.
 
 
 def render_analyst_error_reduction_kpi(
@@ -582,8 +593,33 @@ try:
     _linkage_ctx = DA.build_ctx(ALL_DFS)
     st.session_state["qms_linkage_ctx"] = _linkage_ctx
 except Exception as _linkage_err:
+    _linkage_ctx = None
     st.session_state["qms_linkage_ctx"] = None
     st.sidebar.warning(f"연계 인덱스 빌드 실패: {_linkage_err}")
+
+# ─── 품목/lot 체인 귀속(전파) 파생 컬럼 부여 — 단일 지점 배선(Task 3.3a) ───
+# attribution.attribute_dataframes 는 읽기전용·멱등(원본 컬럼 불변, 신규 4컬럼만 추가).
+# 위 build_ctx(_linkage_ctx)를 재사용해 중복 계산 회피. 데이터 시그니처 기준 1회만 계산
+# (세션 메모 — 추가 캐시 계층 신설 없음). 실패해도 원본으로 graceful 렌더.
+def _attributed_all_dfs(all_dfs: dict, ctx) -> dict:
+    try:
+        _sig = (str(DA.get_refresh_meta().get("last_refresh")),
+                tuple(len(d) for d in all_dfs.values()))
+    except Exception:
+        _sig = None
+    _memo = st.session_state.get("_qms_attr_memo")
+    if _sig is not None and _memo is not None and _memo.get("sig") == _sig:
+        return _memo["dfs"]
+    try:
+        _out = _attribute_dataframes(all_dfs, ctx=ctx)
+    except Exception as _attr_err:  # noqa: BLE001
+        st.sidebar.warning(f"품목 귀속 계산 실패(원본으로 표시): {_attr_err}")
+        return all_dfs
+    st.session_state["_qms_attr_memo"] = {"sig": _sig, "dfs": _out}
+    return _out
+
+
+ALL_DFS = _attributed_all_dfs(ALL_DFS, _linkage_ctx)
 
 # ============================================================================
 # 글로벌 필터바 (Task 2.3) — 상단 고정 바로 이전 (사이드바 → 메인 상단)
@@ -878,7 +914,9 @@ def render_raw_data_section(
                 if _ec and _ec not in priority:
                     priority.append(_ec)
         avail = [c for c in priority if c in raw_all.columns]
-        all_other = [c for c in raw_all.columns if c not in priority and c not in ["연도", "월", "완료여부"]]
+        # [Task 3.3a] 품목/lot 귀속 파생 4컬럼은 제품·배치품질 전용 — 원본 데이터 표에는 노출 안 함(기존 표시 보존).
+        _hide_cols = ["연도", "월", "완료여부"] + list(_ATTR_DERIVED_COLS)
+        all_other = [c for c in raw_all.columns if c not in priority and c not in _hide_cols]
         parser_cols = [c for c in all_other if not c.startswith("_ext_")]
         ext_cols = [c for c in all_other if c.startswith("_ext_")]
         if include_raw:
@@ -891,17 +929,12 @@ def render_raw_data_section(
         else:
             other = parser_cols
         disp = avail + other
-        _col_cfg = {
-            "관리번호": st.column_config.NumberColumn(format="%d"),
-            "D-day": st.column_config.NumberColumn(format="%d일"),
-        }
-        if "건수기여도" in disp:
-            _col_cfg["건수기여도"] = st.column_config.NumberColumn("건수기여도", format="%.5f")
+        # [Task 3.1] 표준 데이터 테이블(모노 관리번호/D-day/건수기여도 자동). 발견일시만 override.
+        _col_cfg = {}
         if "발견일시" in disp:
             _col_cfg["발견일시"] = st.column_config.DateColumn("발견일시", format="YYYY-MM-DD")
         _raw_disp = _to_arrow_safe_df(raw_all[disp])
-        st.dataframe(_raw_disp, use_container_width=True, height=500, hide_index=True,
-                     column_config=_col_cfg)
+        C.data_table(_raw_disp, height=500, column_config=_col_cfg or None)
         st.caption(
             f"표시 칼럼: 우선 {len(avail)} · 파서 {len(parser_cols)}"
             + (f" · _ext_* {len(ext_cols)}" if include_raw else "")
@@ -1080,16 +1113,12 @@ def _linkage_drawer_entry(df: pd.DataFrame, key_suffix: str, title: str | None =
     if df is None or df.empty or "관리번호" not in df.columns:
         st.info("연계를 조회할 데이터가 없습니다.")
         return
-    prnos = (
-        df.drop_duplicates(subset=["관리번호"])["관리번호"].astype(str).tolist()
+    prnos = df.drop_duplicates(subset=["관리번호"])["관리번호"].astype(str).tolist()
+    # [Task 3.1] 선택+🔗 패턴을 표준 컴포넌트로 통일(중복 제거).
+    C.linkage_drilldown(
+        prnos, key=f"drawer_{key_suffix}", on_select=show_linkage_drawer,
+        caption="관리번호를 선택하면 부모-자식 체인과 최종 종결 여부(체인)·지연일을 모달로 봅니다.",
     )
-    st.caption("관리번호를 선택하면 부모-자식 체인과 최종 종결 여부(체인)·지연일을 모달로 봅니다.")
-    c_sel, c_btn = st.columns([3, 1])
-    with c_sel:
-        sel = st.selectbox("관리번호", prnos, key=f"linkdrawer_sel_{key_suffix}", label_visibility="collapsed")
-    with c_btn:
-        if st.button("🔗 연계 보기", key=f"linkdrawer_btn_{key_suffix}", use_container_width=True):
-            show_linkage_drawer(sel)
 
 
 # ============================================================================
@@ -1158,18 +1187,13 @@ def render_closure_check(ws_id: str, dfs: dict, key_suffix: str):
     allhit = pd.concat(frames, ignore_index=True)
     _disp_cols = [c for c in ["관리번호", "프로젝트", "제목", "진행상태", "이상 케이스 플래그", "자식 미종결 수"] if c in allhit.columns]
     st.caption("행의 관리번호를 선택해 🔗 연계 드릴다운으로 체인을 점검하세요.")
-    st.dataframe(
+    # [Task 3.1] 표준 데이터 테이블 + 표준 드릴다운(중복 제거).
+    C.data_table(
         allhit[_disp_cols].rename(columns={"이상 케이스 플래그": "점검 케이스"}),
-        use_container_width=True, hide_index=True,
+        mono_extra=["자식 미종결 수"],
     )
     _prnos = allhit["관리번호"].astype(str).tolist() if "관리번호" in allhit.columns else []
-    if _prnos:
-        c_s, c_b = st.columns([3, 1])
-        with c_s:
-            _sel = st.selectbox("점검할 관리번호", _prnos, key=f"closure_sel_{key_suffix}", label_visibility="collapsed")
-        with c_b:
-            if st.button("🔗 연계 보기", key=f"closure_btn_{key_suffix}", use_container_width=True):
-                show_linkage_drawer(_sel)
+    C.linkage_drilldown(_prnos, key=f"closure_{key_suffix}", on_select=show_linkage_drawer)
 
 
 def render_linkage_section(project_key: str, key_suffix: str, title: str | None = None,
@@ -1757,8 +1781,7 @@ def render_event_category_tab(
                 show_cols = [c for c in ["관리번호", "자사/외주", "제목", "재발여부", "작성팀",
                                            "이상발생 원인", "발생 유형", "발생 세부유형"]
                              if c in rf.columns]
-                st.dataframe(rf[show_cols].head(80), use_container_width=True,
-                              hide_index=True, height=320)
+                C.data_table(rf[show_cols].head(80), height=320)
 
     # ─── 팀별·외주 (자사/외주 분리) ─────────────────────────────────────
     with tab_team:
@@ -1803,8 +1826,7 @@ def render_event_category_tab(
                                 st.caption("Major 일탈 발생 외주업체")
                                 disp_cols = [c for c in ["관리번호", "위탁업체", "일탈 등급", "제목", "접수월"]
                                              if c in maj.columns]
-                                st.dataframe(maj[disp_cols], use_container_width=True,
-                                              hide_index=True, height=220)
+                                C.data_table(maj[disp_cols], height=220)
                 with t_all_tab:
                     if "작성팀" in ftab.columns:
                         gg = _wgroupby(ftab, ["작성팀", "자사/외주"], name="건수")
@@ -1888,7 +1910,7 @@ _WORKSPACES = [
         [("dev", "일탈"), ("incident", "인시던트"), ("complain", "고객불만")]),
     ("actions",  "조치·변경",     "arrow-repeat",
         [("capa", "CAPA·Action"), ("change", "변경관리")]),
-    ("product",  "제품·배치품질", "box-seam",          [("product_new", "제품·배치품질")]),
+    ("product",  "제품·배치품질", "box-seam",          [("product_apqr", "APQR"), ("product_lot", "lot 처분")]),
     ("alerts",   "알림·모니터링", "bell",              [("alerts_new", "알림·모니터링")]),
     ("data",     "데이터·설정",   "table",             [("settings", "설정")]),
 ]
@@ -1963,7 +1985,7 @@ if _render_tab("exec"):
     prev_year = primary_year - 1
 
     # ════════════════════════════════════════════════════════════════════
-    # ① 핵심 (DATA_MAPPING §1) — KPI 4 카드(진척바·목표마커) + 이상신호 3 카드
+    # ① 핵심 (DATA_MAPPING §1) — KPI 4 카드(진척바·목표마커) + 이상신호 2 카드(재발 일시 비활성)
     # ════════════════════════════════════════════════════════════════════
     S.section_header("핵심 KPI · 목표 대비", "①")
     # CAPA 이행률 / 변경 완료율 = safe_pct(weighted_completed, weighted_total)
@@ -1981,47 +2003,44 @@ if _render_tab("exec"):
     overdue_total = sum(weighted_metric_overdue(df_p) for df_p in F.values())
     k1, k2, k3, k4 = st.columns(4)
     with k1:
-        S.kpi_stat_card(capa_rate, KPI_TARGETS["CAPA 이행률"], "CAPA 이행률")
+        C.kpi_stat_card(capa_rate, KPI_TARGETS["CAPA 이행률"], "CAPA 이행률")
     with k2:
-        S.kpi_stat_card(change_rate, KPI_TARGETS["변경 완료율"], "변경 완료율")
+        C.kpi_stat_card(change_rate, KPI_TARGETS["변경 완료율"], "변경 완료율")
     with k3:
         _cval = avg_complaint_days if avg_complaint_days is not None else 0
-        S.kpi_stat_card(_cval, KPI_TARGETS["불만 평균처리일"], "불만 평균처리일", suffix="일", inverse=True)
+        C.kpi_stat_card(_cval, KPI_TARGETS["불만 평균처리일"], "불만 평균처리일", suffix="일", inverse=True)
     with k4:
         # 기한초과는 '낮을수록 좋음' → inverse, 목표 0(초과 없음). 진척바는 0 기준.
-        S.kpi_stat_card(round(overdue_total), 0, "기한초과(전사)", suffix="건", inverse=True, max_val=max(round(overdue_total), 1))
+        C.kpi_stat_card(round(overdue_total), 0, "기한초과(전사)", suffix="건", inverse=True, max_val=max(round(overdue_total), 1))
 
-    # · 이상신호 3 카드: 종결순서 점검(2.5 요약) / 재발 / Analyst error
+    # · 이상신호 카드: 종결순서 점검(2.5 요약) / Analyst error
+    #   [재발 일시 비활성] '재발' 라인 숨김 — 재발여부 = recurrence1('A.재발가능성' select 점수)이며
+    #   '예' 비교 무효(실데이터 '예' 0건)·값 2/6 라벨 미확인이라 현 집계 의미 불명(정직화, 추측 금지).
+    #   TODO: 재발 신호 도메인 재정의 대기 — 라이브 폼 'A.재발가능성' 값 2/6 라벨 확인 후 재정의.
     st.caption("전사 이상신호")
-    _sg1, _sg2, _sg3 = st.columns(3)
+    _sg1, _sg3 = st.columns(2)
     # 종결순서 점검 = 2.5 와 동일 수치(워크스페이스 합 = 전 DF 카운트)
     _ov_pre = _ov_miss = 0
     for _wsid in ("qc", "qa", "actions"):
         _a, _b = _ws_closure_counts(_wsid, F)
         _ov_pre += _a; _ov_miss += _b
     with _sg1:
-        st.metric("🧭 종결순서 점검", f"{_ov_pre + _ov_miss}건",
-                  help=f"선종결 의심 {_ov_pre} · 종결처리 누락 {_ov_miss} (이상 케이스 플래그 2종 합)")
-        st.caption(f"선종결 {_ov_pre} · 누락 {_ov_miss}")
+        # [Task 3.1] 이상신호 = 표준 signal_card(의미색 좌측 강조). 값/로직 불변.
+        C.signal_card("🧭 종결순서 점검", f"{_ov_pre + _ov_miss}건", tone="danger", icon="",
+                      sub=f"선종결 의심 {_ov_pre} · 종결처리 누락 {_ov_miss} (플래그 2종 합)")
         if st.button("점검하러 가기 →", key="sig_jump_closure", use_container_width=True):
             st.session_state["_ws_jump_target"] = "QA 품질운영"
             st.rerun()
-    # 재발 = 재발여부 비어있지 않음(기존 코드 로직, deviation+외주). DATA_MAPPING '예' 문구는
-    # 실데이터에 '예' 값이 없어, 코드 기존 정의(notna·non-empty)에 바인딩(보고서에 명시).
-    _recur_n = 0
-    for _rk in ("deviation", "deviationoutsourcing"):
-        _rdf = F.get(_rk)
-        if _rdf is not None and not _rdf.empty and "재발여부" in _rdf.columns:
-            _rb = _rdf.drop_duplicates(subset=["관리번호"]) if "관리번호" in _rdf.columns else _rdf
-            _recur_n += int((_rb["재발여부"].notna() & (_rb["재발여부"].astype(str).str.strip() != "") & (_rb["재발여부"].astype(str).str.strip() != "아니요")).sum())
-    _sg2.metric("↻ 재발", f"{_recur_n}건", help="일탈(자사+외주) 재발여부 표기 건수(빈값·'아니요' 제외)")
+    # [재발 카드 일시 비활성 — 위 TODO 참조. 재발 집계/표시 모두 보류, 추측 집계 미작성.]
     # Analyst error = 이상발생 원인=="Analyst error" 건수기여도(oos+dev)
     _ae_df = pd.concat([d for d in (foos, fdev) if not d.empty], ignore_index=True) if any(not d.empty for d in (foos, fdev)) else pd.DataFrame()
     _ae_n = 0
     if not _ae_df.empty and "이상발생 원인" in _ae_df.columns:
         _ae_hit = _ae_df[_ae_df["이상발생 원인"] == "Analyst error"]
         _ae_n = round(_ae_hit["건수기여도"].sum()) if "건수기여도" in _ae_hit.columns else len(_ae_hit)
-    _sg3.metric("🔬 Analyst error", f"{_ae_n}건", help="이상발생 원인='Analyst error' 건수기여도 합(OOS+일탈)")
+    with _sg3:
+        C.signal_card("🔬 Analyst error", f"{_ae_n}건", tone="info", icon="",
+                      sub="이상발생 원인='Analyst error' 건수기여도 합(OOS+일탈)")
 
     st.divider()
 
@@ -2080,23 +2099,16 @@ if _render_tab("exec"):
             _team_col = "작성팀" if "작성팀" in _oa.columns else None
             _cols = ["프로젝트"] + [c for c in ["관리번호", "제목", _team_col, "기한일", "D-day", "진행상태"] if c and c in _oa.columns]
             _top = _oa.sort_values("D-day").head(20)
-            st.dataframe(_top[_cols], use_container_width=True, hide_index=True, height=300,
-                         column_config={"D-day": st.column_config.NumberColumn("D-day", format="%d일")})
-            # 행 드릴다운: 관리번호 선택 → 2.4 드로어
+            # [Task 3.1] 표준 데이터 테이블(상태 Pill·모노 관리번호/D-day) + 표준 드릴다운(중복 제거).
+            C.data_table(_top[_cols], status=True, height=300)
             _prnos = _top["관리번호"].astype(str).tolist() if "관리번호" in _top.columns else []
-            if _prnos:
-                _cs, _cb = st.columns([3, 1])
-                with _cs:
-                    _sel = st.selectbox("관리번호", _prnos, key="ov_overdue_sel", label_visibility="collapsed")
-                with _cb:
-                    if st.button("🔗 연계 보기", key="ov_overdue_btn", use_container_width=True):
-                        show_linkage_drawer(_sel)
+            C.linkage_drilldown(_prnos, key="ov_overdue", on_select=show_linkage_drawer)
         else:
             st.success("기한 초과 항목이 없습니다.")
     with d2:
         st.caption("🧭 종결순서 점검 — 전사 요약")
-        st.metric("선종결 의심", f"{_ov_pre}건", help=_LINKAGE_FLAG_HELP[_FLAG_PRE])
-        st.metric("종결처리 누락", f"{_ov_miss}건", help=_LINKAGE_FLAG_HELP[_FLAG_MISS])
+        C.signal_card("선종결 의심", f"{_ov_pre}건", tone="warn", sub=_LINKAGE_FLAG_HELP[_FLAG_PRE])
+        C.signal_card("종결처리 누락", f"{_ov_miss}건", tone="danger", sub=_LINKAGE_FLAG_HELP[_FLAG_MISS])
         st.caption("상세는 각 워크스페이스 하단 '종결순서 점검' 패널에서 (소유 레코드 기준).")
 
     st.divider()
@@ -2377,13 +2389,10 @@ if _render_tab("capa"):
             S.section_header("CAPA 상세 목록")
             capa_disp = [c for c in ["관리번호", "제목", "등록자", "기한일", "진행상태",
                                       "D-day", "CAPA 구분", "사유"] if c in fcapa.columns]
-            st.dataframe(
+            # [Task 3.1] 표준 데이터 테이블(상태 Pill·모노 관리번호/D-day).
+            C.data_table(
                 fcapa[capa_disp].sort_values("D-day") if "D-day" in fcapa.columns else fcapa[capa_disp],
-                use_container_width=True, hide_index=True, height=360,
-                column_config={
-                    "D-day": st.column_config.NumberColumn("D-day", format="%d일"),
-                    "관리번호": st.column_config.NumberColumn("관리번호", format="%d"),
-                },
+                status=True, height=360,
             )
 
     with capa_ai:
@@ -2397,7 +2406,7 @@ if _render_tab("capa"):
         # [Task 2.6] 반원 게이지 제거 → 진척 바 KPI 스탯 카드(토큰 일관). 게이지 잔존 0.
         S.section_header("모니터링AI 이행률")
         ai_rate = safe_pct(ai_d, ai_t)
-        S.kpi_stat_card(round(ai_rate, 1), 80, "모니터링AI 이행률")
+        C.kpi_stat_card(round(ai_rate, 1), 80, "모니터링AI 이행률")
 
     with capa_deadline:
         S.section_header("기한 초과·지연 현황")
@@ -2413,9 +2422,8 @@ if _render_tab("capa"):
             all_over = pd.concat(overdue_frames, ignore_index=True)
             disp = [c for c in ["구분", "관리번호", "제목", "기한일", "D-day", "등록자", "진행상태"]
                     if c in all_over.columns]
-            st.dataframe(all_over[disp].sort_values("D-day"),
-                         use_container_width=True, hide_index=True, height=380,
-                         column_config={"D-day": st.column_config.NumberColumn("D-day", format="%d일")})
+            # [Task 3.1] 표준 데이터 테이블(상태 Pill — 기한초과 맥락이라 대부분 🔴 초과).
+            C.data_table(all_over[disp].sort_values("D-day"), status=True, height=380)
         else:
             st.success("기한 초과 항목이 없습니다.")
 
@@ -3042,9 +3050,8 @@ if _render_tab("deadline"):
         S.section_header("기한 임박 상세 목록 (D-day ≤ 7일)", "⚠️")
         urgent = dd_all[dd_all["D-day"] <= 7].sort_values("D-day")
         if not urgent.empty:
-            st.dataframe(urgent.head(30), use_container_width=True, hide_index=True, height=400,
-                         column_config={"D-day": st.column_config.NumberColumn("D-day", format="%d일"),
-                                        "관리번호": st.column_config.NumberColumn("관리번호", format="%d")})
+            # [Task 3.1] 표준 데이터 테이블(상태 Pill·모노 관리번호/D-day).
+            C.data_table(urgent.head(30), status=True, height=400)
         else:
             st.success("임박한 기한 항목이 없습니다.")
     else:
@@ -3080,9 +3087,9 @@ if _render_tab("settings"):
                 "상세수집": "✅" if PROJECT_META[pk]["detail"] else "목록만",
                 "상태": "🟢 정상" if n > 0 else "⚪ 빈 데이터",
             })
-        st.dataframe(
+        # [Task 3.1] 표준 데이터 테이블(건수 컬럼은 호출부 '%d건' override). '상태' 컬럼은 수집상태 라벨.
+        C.data_table(
             pd.DataFrame(status_data),
-            use_container_width=True, hide_index=True,
             column_config={
                 "기한 초과": st.column_config.NumberColumn("기한 초과", format="%d건"),
                 "수집 건수": st.column_config.NumberColumn("수집 건수", format="%d건"),
@@ -3273,24 +3280,369 @@ if _active_ws in _WS_OWNED_PROJECTS:
 #  · 알림·모니터링: 룰 기반 알림 센터 — Task 3.4 (현 설정탭 알림설정이 모태)
 # 레일에는 지금 노출하되, 본문은 "준비 중 + 예정 내용" 안내로 자리만 잡는다.
 # ============================================================================
-if _render_tab("product_new"):
-    S.render_header("제품·배치 품질", "APQR · 출하 전 확인 (Phase 3 신설 예정)")
-    st.markdown("---")
-    st.info(
-        "이 워크스페이스는 **Phase 3 (Task 3.3)** 에서 구현됩니다.\n\n"
-        "- **APQR(연간품질평가)**: 품목 × 연도별 OOS/일탈/조사/CAPA·재발·원인 집계\n"
-        "- **출하 전 확인(lot)**: 제조번호 입력 → 직접보유+체인 자식 수집 → 종결 시 ✅PASS / 미종결 ⛔HOLD\n\n"
-        "※ 모니터링 보조이며 정식 출하 판정 시스템이 아닙니다."
-    )
+if _render_tab("product_apqr"):
+    S.render_header("제품·배치 품질", "APQR · 품목 × 연도")
+    st.caption("※ 모니터링 보조 — 정식 출하 판정 시스템이 아닙니다. (lot 처분 PASS/HOLD 는 상단 'lot 처분' 탭)")
+    st.divider()
+
+    _ATTR_NAME = "품목명_귀속"
+    _ATTR_SRC = "귀속출처"
+
+    # ════════════════════════════════════════════════════════════════════
+    # ① 품목 귀속 커버리지 (전체 데이터 기준 — 체인 전파 정직 표기)
+    #   원본 품목 컬럼 불변, attribution.py 파생(귀속출처)만 사용. 고유 관리번호 기준.
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("품목 귀속 커버리지 (전체 데이터 기준)", "①")
+    _src_uniq: dict[str, int] = {}
+    _seen_prno: set[str] = set()
+    for _k, _d in ALL_DFS.items():
+        if _d is None or _d.empty or "관리번호" not in _d.columns or _ATTR_SRC not in _d.columns:
+            continue
+        _b = _d.drop_duplicates(subset=["관리번호"])
+        for _prno, _s in zip(_b["관리번호"].astype(str), _b[_ATTR_SRC]):
+            if _prno in _seen_prno:
+                continue
+            _seen_prno.add(_prno)
+            _src_uniq[_s] = _src_uniq.get(_s, 0) + 1
+    _self_n = _src_uniq.get("자체보유", 0)
+    _inh_n = _src_uniq.get("상속", 0)
+    _none_n = _src_uniq.get("미분류", 0)
+    _multi_n = _src_uniq.get("복수(미분류)", 0)
+    _cov1, _cov2, _cov3 = st.columns(3)
+    with _cov1:
+        C.signal_card("품목 귀속 (자체+상속)", f"{_self_n + _inh_n:,}건", tone="ok", icon="",
+                      sub=f"자체보유 {_self_n:,} · 상속(체인) {_inh_n:,}")
+    with _cov2:
+        C.signal_card("전사/미분류", f"{_none_n:,}건", tone="neutral", icon="",
+                      sub="품목 앵커 없음(변경계보·고립)")
+    with _cov3:
+        C.signal_card("복수(미분류)", f"{_multi_n:,}건", tone=("warn" if _multi_n else "neutral"), icon="",
+                      sub="도달 조상 품목 충돌")
+    st.caption("귀속출처: **자체보유**=레코드 자체 품목 · **상속**=품질계보 조상(OOS·일탈)에서 체인 전파 · "
+               "**미분류**=귀속 불가. 원본 `품목코드`/`품목명` 컬럼은 불변, 파생(`품목명_귀속`)만 집계에 사용.")
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════
+    # ② 품목별 품질 이벤트 매트릭스 (선택 연도, 건수기여도 합)
+    #   행=품목명_귀속(미분류 포함) · 열=6 품질 카테고리(기존 프로젝트 분류 재사용) + 합계.
+    #   값=_wgroupby(건수기여도 합, 없으면 size) — 기존 가중 집계 헬퍼 재사용.
+    # ════════════════════════════════════════════════════════════════════
+    _yr_label = ", ".join(str(y) for y in selected_years) if selected_years else "전체"
+    S.section_header(f"품목별 품질 이벤트 — {_yr_label} (건수기여도 합)", "②")
+    _APQR_CATS = [
+        ("OOS", ["oos"]),
+        ("일탈", ["deviation", "deviationoutsourcing", "deviationactionitem"]),
+        ("조사", ["investigation"]),
+        ("CAPA", ["capa", "capaactionitem", "actionitem"]),
+        ("변경", ["changemanagement", "changeactionitem", "changeimpactassessment", "changeoutsourcing"]),
+        ("불만", ["complain"]),
+    ]
+    # 카테고리별 집계는 **프로젝트별 _wgroupby 후 합산**한다(신규 집계 로직 0, 기존 헬퍼 재사용).
+    # 카테고리 안에 건수기여도 보유(OOS/일탈)·미보유(조사/CAPA…) 프로젝트가 섞일 때 concat 후
+    # 집계하면 미보유 행의 NaN 건수기여도가 0 처리되어 누락되므로, 프로젝트 단위로 집계해 합친다.
+    _cat_map: dict[str, dict] = {}
+    _items: set[str] = set()
+    for _cat, _keys in _APQR_CATS:
+        _acc: dict[str, int] = {}
+        for _k in _keys:
+            _d = F.get(_k)
+            if _d is None or _d.empty or _ATTR_NAME not in _d.columns:
+                continue
+            _g = _wgroupby(_d, _ATTR_NAME, name="건수")   # 프로젝트별 건수기여도 합(없으면 size)
+            for _it, _v in zip(_g[_ATTR_NAME].astype(str), _g["건수"]):
+                _acc[_it] = _acc.get(_it, 0) + int(_v)
+                _items.add(_it)
+        _cat_map[_cat] = _acc
+
+    if not _items:
+        S.empty_state("선택한 연도에 해당하는 품질 이벤트가 없습니다.")
+    else:
+        _rows = []
+        for _it in _items:
+            _row = {"품목명": _it or "(품목명 없음)"}
+            _tot = 0
+            for _cat, _ in _APQR_CATS:
+                _v = int(_cat_map.get(_cat, {}).get(_it, 0))
+                _row[_cat] = _v
+                _tot += _v
+            _row["합계"] = _tot
+            _rows.append(_row)
+        _mat = pd.DataFrame(_rows).sort_values("합계", ascending=False).reset_index(drop=True)
+        st.caption(f"품목 {len(_mat)}행(전사/미분류 포함) · OOS·일탈은 건수기여도 가중, 그 외는 건수. "
+                   "변경·불만은 품목 귀속 약함 → 대부분 전사/미분류.")
+        C.data_table(
+            _mat, height=420,
+            column_config={_c: st.column_config.NumberColumn(_c, format="%d")
+                           for _c in ["OOS", "일탈", "조사", "CAPA", "변경", "불만", "합계"]},
+        )
+
+        st.divider()
+
+        # ════════════════════════════════════════════════════════════════
+        # ③ 품목 드릴다운 — 이벤트 목록(상태 Pill·D-day·관리번호) + 🔗 연계 추적
+        # ════════════════════════════════════════════════════════════════
+        S.section_header("품목 드릴다운 — 이벤트 추적", "③")
+        _sel_item = st.selectbox("품목 선택", _mat["품목명"].tolist(), key="apqr_item_sel")
+        _sel_key = "" if _sel_item == "(품목명 없음)" else _sel_item
+        # 프로젝트별 스키마가 달라 전열 concat 시 all-NA 컬럼 경고 → 표시 컬럼만 투영 후 concat.
+        _EV_COLS = ["관리번호", "프로젝트", "제목", "작성팀", "기한일", "D-day", "진행상태", "완료여부"]
+        _ev_frames = []
+        for _cat, _keys in _APQR_CATS:
+            for _k in _keys:
+                _d = F.get(_k)
+                if _d is None or _d.empty or _ATTR_NAME not in _d.columns:
+                    continue
+                _sub = _d[_d[_ATTR_NAME].astype(str) == str(_sel_key)]
+                if not _sub.empty:
+                    _sub2 = _sub[[c for c in _EV_COLS if c in _sub.columns]].copy()
+                    _sub2.insert(0, "카테고리", _cat)
+                    _ev_frames.append(_sub2)
+        if _ev_frames:
+            # 이종 프로젝트 스키마 정렬 시 all-NA 컬럼 dtype FutureWarning(무해) — 이 concat 한정 억제.
+            import warnings as _w
+            with _w.catch_warnings():
+                _w.simplefilter("ignore", FutureWarning)
+                _ev = pd.concat(_ev_frames, ignore_index=True)
+            _ev_cols = [c for c in ["카테고리", "관리번호", "프로젝트", "제목", "작성팀", "기한일", "D-day", "진행상태"]
+                        if c in _ev.columns]
+            _ev_disp = _ev[_ev_cols].sort_values("D-day") if "D-day" in _ev.columns else _ev[_ev_cols]
+            st.caption(f"**{_sel_item}** — 이벤트 {len(_ev)}건(선택 연도)")
+            C.data_table(_ev_disp, status=True, height=340)
+            _ev_prnos = _ev["관리번호"].astype(str).tolist() if "관리번호" in _ev.columns else []
+            C.linkage_drilldown(_ev_prnos, key="apqr_item", on_select=show_linkage_drawer,
+                                caption="관리번호 선택 → 🔗 로 부모-자식 체인·종결여부 추적")
+        else:
+            S.empty_state("선택한 품목의 이벤트가 없습니다.")
+
+    S.render_footer()
+
+
+# ============================================================================
+# 제품·배치품질 — lot 처분(PASS/HOLD) sub-view (Task 3.3b)
+#   lot 키=제조번호_귀속(3.3a attribution). 판정=disposition.judge_lot_dispositions
+#   (적합/보류/부적합/미상, 최악 우선). 표준 컴포넌트만 사용. 건수=건수기여도 합.
+# ============================================================================
+if _render_tab("product_lot"):
+    S.render_header("제품·배치 품질", "lot 처분 — 출하 전 확인 (PASS/HOLD 보조)")
+    st.caption("※ 모니터링 보조 — 정식 출하 판정 시스템이 아닙니다. 최악 우선: 부적합 > 보류 > 적합 > 미상.")
+    st.divider()
+
+    _LOT_ATTR = "제조번호_귀속"
+
+    # ════════════════════════════════════════════════════════════════════
+    # ① lot 커버리지(전체 기준) + 처분 분포(선택 연도)
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("lot 커버리지 · 처분 분포", "①")
+    # 커버리지(전체 데이터, 고유 관리번호): lot 보유(자체/상속)·미상. 자체=원본 제조번호 보유.
+    _lot_total = _lot_self = _lot_none = 0
+    _lseen: set[str] = set()
+    for _k, _d in ALL_DFS.items():
+        if _d is None or _d.empty or "관리번호" not in _d.columns or _LOT_ATTR not in _d.columns:
+            continue
+        _b = _d.drop_duplicates(subset=["관리번호"])
+        _prnos = _b["관리번호"].astype(str)
+        _lots = _b[_LOT_ATTR].astype(str)
+        _origs = _b["제조번호"].astype(str) if "제조번호" in _b.columns else None
+        for _i in range(len(_b)):
+            _p = _prnos.iat[_i]
+            if _p in _lseen:
+                continue
+            _lseen.add(_p)
+            _lv = _lots.iat[_i].strip()
+            if _lv and _lv.lower() not in ("nan", "none"):
+                _lot_total += 1
+                _ov = _origs.iat[_i].strip() if _origs is not None else ""
+                if _ov and _ov.lower() not in ("nan", "none"):
+                    _lot_self += 1
+            else:
+                _lot_none += 1
+    _lot_inh = _lot_total - _lot_self
+
+    _disp = _judge_lot_dispositions(F)             # 선택 연도(글로벌 필터) 기준
+    _dist = _disposition_distribution(_disp)
+    _r1 = st.columns(2)
+    with _r1[0]:
+        C.signal_card("lot 보유 (전체)", f"{_lot_total:,}건", tone="info", icon="",
+                      sub=f"자체보유 {_lot_self:,} · 상속(체인) {_lot_inh:,}")
+    with _r1[1]:
+        C.signal_card("lot 미상 (전체)", f"{_lot_none:,}건", tone="neutral", icon="",
+                      sub="제조번호 없음 — 처분 집계 제외(추측 금지)")
+    _r2 = st.columns(4)
+    _disp_tone = {"부적합": "danger", "보류": "warn", "적합": "ok", "미상": "neutral"}
+    _disp_sub = {"부적합": "OOS 기준일탈 부적합", "보류": "미종결 존재",
+                 "적합": "전 종결 + 적합", "미상": "판정 정보 부족"}
+    for _i, _lab in enumerate(_DISP_ORDER):
+        with _r2[_i]:
+            C.signal_card(f"{_lab} lot", f"{_dist.get(_lab, 0)}", tone=_disp_tone[_lab], icon="",
+                          sub=_disp_sub[_lab])
+    st.caption("커버리지=전체 데이터 기준 · 처분 분포·표=선택 연도(글로벌 필터) 이벤트 기준. "
+               "판정 소스: OOS `기준 일탈 최종 결과`(적합/부적합) + `최종 종결 여부(체인)`. lot 미상은 처분 집계 제외.")
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════
+    # ② lot 처분 표 (행=제조번호, 처분 Pill·품목명·관련건수·OOS수·미종결수)
+    # ════════════════════════════════════════════════════════════════════
+    _yr_l = ", ".join(str(y) for y in selected_years) if selected_years else "전체"
+    S.section_header(f"lot 처분 표 — {_yr_l}", "②")
+    if _disp.empty:
+        S.empty_state("선택한 연도에 lot(제조번호) 보유 이벤트가 없습니다.")
+    else:
+        _disp_show = _disp.copy()
+        _disp_show["처분"] = _disp_show["처분"].map(C.disposition_pill_label)
+        _disp_show = _disp_show.rename(columns={"제조번호_귀속": "제조번호(lot)", "품목명_귀속": "품목명"})
+        st.caption(f"lot {len(_disp_show)}개 · 관련건수=건수기여도 합 · 처분 최악 우선(부적합>보류>적합>미상) 정렬.")
+        C.data_table(
+            _disp_show, height=420,
+            column_config={
+                "처분": st.column_config.TextColumn("처분", help="적합🟢/보류🟠/부적합🔴/미상⚪", width="small"),
+                **{_c: st.column_config.NumberColumn(_c, format="%d") for _c in ["관련건수", "OOS수", "미종결수"]},
+            },
+        )
+
+        st.divider()
+
+        # ════════════════════════════════════════════════════════════════
+        # ③ lot 드릴다운 — 관련 이벤트 목록(상태 Pill·결과·종결) + 🔗 연계 추적
+        # ════════════════════════════════════════════════════════════════
+        S.section_header("lot 드릴다운 — 관련 이벤트", "③")
+        _sel_lot = st.selectbox("제조번호(lot) 선택", _disp[_DISP_LOT_COL].tolist(), key="lot_disp_sel")
+        _LEV_COLS = ["관리번호", "프로젝트", "제목", "작성팀", "기한일", "D-day", "진행상태",
+                     "완료여부", "기준 일탈 최종 결과", "최종 종결 여부(체인)"]
+        _lev_frames = []
+        for _k, _d in F.items():
+            if _d is None or _d.empty or _LOT_ATTR not in _d.columns:
+                continue
+            _sub = _d[_d[_LOT_ATTR].astype(str).str.strip() == str(_sel_lot)]
+            if not _sub.empty:
+                _lev_frames.append(_sub[[c for c in _LEV_COLS if c in _sub.columns]].copy())
+        if _lev_frames:
+            import warnings as _w2
+            with _w2.catch_warnings():
+                _w2.simplefilter("ignore", FutureWarning)
+                _lev = pd.concat(_lev_frames, ignore_index=True)
+            _lev_cols = [c for c in ["관리번호", "프로젝트", "제목", "작성팀", "기한일", "D-day",
+                                     "진행상태", "기준 일탈 최종 결과", "최종 종결 여부(체인)"] if c in _lev.columns]
+            _lev_disp = _lev[_lev_cols].sort_values("D-day") if "D-day" in _lev.columns else _lev[_lev_cols]
+            st.caption(f"lot **{_sel_lot}** — 관련 이벤트 {len(_lev)}건(선택 연도)")
+            C.data_table(_lev_disp, status=True, height=320)
+            _lev_prnos = _lev["관리번호"].astype(str).tolist() if "관리번호" in _lev.columns else []
+            C.linkage_drilldown(_lev_prnos, key="lot_disp", on_select=show_linkage_drawer,
+                                caption="관리번호 선택 → 🔗 로 부모-자식 체인·종결여부 추적")
+        else:
+            S.empty_state("선택한 lot 의 관련 이벤트가 없습니다.")
+
     S.render_footer()
 
 if _render_tab("alerts_new"):
-    S.render_header("알림·모니터링", "룰 기반 알림 센터 (Phase 3 신설 예정)")
-    st.markdown("---")
-    st.info(
-        "이 워크스페이스는 **Phase 3 (Task 3.4)** 에서 구현됩니다.\n\n"
-        "- 기한초과 · D-3 임박 · 재발 · 미종결 누적 **룰 관리**\n"
-        "- 워크스페이스/스코프별 구독 + Slack · 이메일 채널(기존 `alert_service` 활용)\n\n"
-        "현재 알림 설정은 **데이터·설정 → 알림 설정** 탭에 있습니다."
-    )
+    S.render_header("알림·모니터링", "기한 위험 · 신규 OOS (읽기 전용 모니터링)")
+    st.caption("※ 모니터링 보조 — 이 화면은 현황 표시 전용입니다. 알림 발송·규칙 편집은 "
+               "데이터·설정 → 알림 설정 탭 또는 스케줄러가 담당합니다.")
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════
+    # ① 기한 위험 모니터링 (전 프로젝트 D-day 재사용 — 신규 로직 0, 건수기여도 합)
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("기한 위험 모니터링 (전 프로젝트)", "①")
+    _over_w = round(sum(weighted_metric_overdue(_d) for _d in F.values()))
+
+    def _wcount_dday(_lo, _hi) -> int:
+        _t = 0
+        for _d in F.values():
+            if _d is None or _d.empty or "D-day" not in _d.columns:
+                continue
+            _dd = _num_series(_d["D-day"], default=99999)
+            _t += _wcount(_d, (_dd >= _lo) & (_dd <= _hi))
+        return _t
+
+    _imm3 = _wcount_dday(0, 3)
+    _imm7 = _wcount_dday(0, 7)
+    _ac = st.columns(3)
+    with _ac[0]:
+        C.signal_card("기한 초과", f"{_over_w:,}건", tone="danger", icon="", sub="D-day < 0 (전사)")
+    with _ac[1]:
+        C.signal_card("D-3 임박", f"{_imm3:,}건", tone="warn", icon="", sub="0 ≤ D-day ≤ 3")
+    with _ac[2]:
+        C.signal_card("D-7 임박", f"{_imm7:,}건", tone="warn", icon="", sub="0 ≤ D-day ≤ 7")
+
+    _risk_frames = []
+    for _pk, _d in F.items():
+        if _d is None or _d.empty or "D-day" not in _d.columns:
+            continue
+        _dd = _num_series(_d["D-day"], default=99999)
+        _sub = _d[_dd <= 7]   # 초과 + 7일 이내 임박
+        if not _sub.empty:
+            _keep = [c for c in ["관리번호", "제목", "작성팀", "기한일", "D-day", "진행상태"] if c in _sub.columns]
+            _f = _sub[_keep].copy()
+            _f.insert(0, "프로젝트", PROJECT_META[_pk]["label"])
+            _risk_frames.append(_f)
+    if _risk_frames:
+        import warnings as _wa
+        with _wa.catch_warnings():
+            _wa.simplefilter("ignore", FutureWarning)
+            _risk = pd.concat(_risk_frames, ignore_index=True)
+        _risk = _risk.sort_values("D-day").head(100)
+        st.caption(f"기한 위험(초과 + 7일 이내) 상위 {len(_risk)}건 — D-day 오름차순")
+        C.data_table(_risk, status=True, height=360)
+        C.linkage_drilldown(_risk["관리번호"].astype(str).tolist(), key="alert_risk",
+                            on_select=show_linkage_drawer)
+    else:
+        S.empty_state("기한 위험 항목이 없습니다.")
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════
+    # ② 신규 OOS 모니터링 (최근 30일 · 등록일 기준 — 기존 데이터 재사용)
+    # ════════════════════════════════════════════════════════════════════
+    _NEW_DAYS = 30
+    S.section_header(f"신규 OOS 모니터링 (최근 {_NEW_DAYS}일 · 등록일)", "②")
+    _new_oos = pd.DataFrame()
+    if not foos.empty and "등록일" in foos.columns:
+        _reg = pd.to_datetime(foos["등록일"], errors="coerce")
+        _cut = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=_NEW_DAYS)
+        _new_oos = foos[_reg.notna() & (_reg >= _cut)].copy()
+    if not _new_oos.empty:
+        _new_w = _wcount(_new_oos)
+        _open_mask = None
+        if "최종 종결 여부(체인)" in _new_oos.columns:
+            _open_mask = ~_new_oos["최종 종결 여부(체인)"].map(
+                lambda v: v is True or str(v).strip().lower() in ("true", "1"))
+        _new_open = _wcount(_new_oos, _open_mask) if _open_mask is not None else 0
+        _nc = st.columns(2)
+        with _nc[0]:
+            C.signal_card(f"최근 {_NEW_DAYS}일 신규 OOS", f"{_new_w:,}건", tone="info", icon="",
+                          sub="등록일 기준 · 건수기여도 합")
+        with _nc[1]:
+            C.signal_card("신규 OOS 미종결", f"{_new_open:,}건", tone="warn", icon="",
+                          sub="최종 종결 여부(체인) == False")
+        _oos_cols = [c for c in ["관리번호", "제목", "품목명", "제조번호", "이상발생 원인",
+                                 "기준 일탈 최종 결과", "진행상태", "D-day"] if c in _new_oos.columns]
+        _new_sorted = (_new_oos.sort_values("등록일", ascending=False)
+                       if "등록일" in _new_oos.columns else _new_oos)
+        C.data_table(_new_sorted[_oos_cols], status=True, height=320)
+        C.linkage_drilldown(_new_oos["관리번호"].astype(str).tolist(), key="alert_newoos",
+                            on_select=show_linkage_drawer)
+    else:
+        S.empty_state(f"최근 {_NEW_DAYS}일 신규 OOS 가 없습니다(선택 연도 기준).")
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════
+    # ③ 알림 규칙·채널 현황 (READ-ONLY — 비밀값/수신자 주소 비표시, 발송·편집 없음)
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("알림 규칙·채널 현황 (읽기 전용)", "③")
+    _slack_on = bool(os.environ.get("QMS_SLACK_WEBHOOK", "").strip())
+    _email_on = bool(os.environ.get("QMS_SMTP_USER", "").strip())
+    _to_on = bool(os.environ.get("QMS_ALERT_TO", "").strip())
+    _status_rows = [
+        {"항목": "규칙", "현황": "기한 초과 (D-day < 0)", "소스": "run_overdue_alert(threshold_days=0)"},
+        {"항목": "Slack 채널", "현황": "설정됨" if _slack_on else "미설정", "소스": "QMS_SLACK_WEBHOOK (.env)"},
+        {"항목": "이메일 채널", "현황": "설정됨" if _email_on else "미설정", "소스": "QMS_SMTP_USER (.env)"},
+        {"항목": "이메일 수신자", "현황": "설정됨" if _to_on else "미설정", "소스": "QMS_ALERT_TO (.env)"},
+    ]
+    C.data_table(pd.DataFrame(_status_rows))
+    st.caption("※ 비밀값·수신자 주소는 표시하지 않습니다(설정 여부만). 발송·규칙 편집·`.env` 쓰기는 "
+               "이 화면에서 하지 않습니다 — 데이터·설정 → 알림 설정 탭 또는 스케줄러가 담당.")
+
     S.render_footer()
