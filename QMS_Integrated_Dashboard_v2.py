@@ -1092,6 +1092,79 @@ def _linkage_drawer_entry(df: pd.DataFrame, key_suffix: str, title: str | None =
             show_linkage_drawer(sel)
 
 
+# ============================================================================
+# 종결순서 점검 (Task 2.5) — 워크스페이스 분산 + 종합현황 요약
+# 탐지는 기존 '이상 케이스 플래그' 컬럼(refresh_job 이 domain.linkage 로 머지) 재사용:
+#   · 부모종결_자식미종결 = 선종결 의심(본 종결·자식 미완료)
+#   · 자식완료_부모미완료 = 종결처리 누락(자식 완료·본 미종결)
+# 귀속 규칙(CONTENT_MAP / 사양서 정정): QC=oos·investigation / QA=deviation·complain /
+# actions=capa·changemanagement. (일탈은 QA 전사 1곳에만 귀속 → 합계 중복 없음.)
+# ============================================================================
+_WS_OWNED_PROJECTS = {
+    "qc":      ["oos", "investigation"],
+    "qa":      ["deviation", "complain"],
+    "actions": ["capa", "changemanagement"],
+}
+_FLAG_PRE = "부모종결_자식미종결"   # 선종결 의심
+_FLAG_MISS = "자식완료_부모미완료"  # 종결처리 누락
+
+
+def _closure_counts(df: pd.DataFrame) -> tuple[int, int]:
+    """DF 에서 (선종결 의심, 종결처리 누락) 건수. 관리번호 기준 1:1(중복 제거)."""
+    if df is None or df.empty or "이상 케이스 플래그" not in df.columns:
+        return 0, 0
+    base = df.drop_duplicates(subset=["관리번호"]) if "관리번호" in df.columns else df
+    flags = base["이상 케이스 플래그"].fillna("")
+    return int(flags.str.contains(_FLAG_PRE).sum()), int(flags.str.contains(_FLAG_MISS).sum())
+
+
+def _ws_closure_counts(ws_id: str, dfs: dict) -> tuple[int, int]:
+    """워크스페이스 소유 프로젝트들의 점검 건수 합(필터 적용 DF=dfs 기준)."""
+    pre = miss = 0
+    for pk in _WS_OWNED_PROJECTS.get(ws_id, []):
+        a, b = _closure_counts(dfs.get(pk))
+        pre += a; miss += b
+    return pre, miss
+
+
+def render_closure_check(ws_id: str, dfs: dict, key_suffix: str):
+    """[Task 2.5] 워크스페이스 소유 레코드의 종결순서 점검 케이스 목록 + 🔗 드로어."""
+    S.section_header("종결순서 점검 (소유 레코드 기준)", "🧭")
+    owned = _WS_OWNED_PROJECTS.get(ws_id, [])
+    # 소유 프로젝트들의 플래그 보유 레코드만 모음
+    frames = []
+    for pk in owned:
+        d = dfs.get(pk)
+        if d is None or d.empty or "이상 케이스 플래그" not in d.columns:
+            continue
+        b = d.drop_duplicates(subset=["관리번호"]) if "관리번호" in d.columns else d
+        hit = b[b["이상 케이스 플래그"].fillna("").str.contains(f"{_FLAG_PRE}|{_FLAG_MISS}", na=False)]
+        if not hit.empty:
+            frames.append(hit)
+    pre_n, miss_n = _ws_closure_counts(ws_id, dfs)
+    cc1, cc2 = st.columns(2)
+    cc1.metric("선종결 의심", f"{pre_n}건", help=_LINKAGE_FLAG_HELP[_FLAG_PRE])
+    cc2.metric("종결처리 누락", f"{miss_n}건", help=_LINKAGE_FLAG_HELP[_FLAG_MISS])
+    if not frames:
+        st.success("점검 대상 케이스가 없습니다 — 소유 레코드 모두 종결순서 정상.")
+        return
+    allhit = pd.concat(frames, ignore_index=True)
+    _disp_cols = [c for c in ["관리번호", "프로젝트", "제목", "진행상태", "이상 케이스 플래그", "자식 미종결 수"] if c in allhit.columns]
+    st.caption("행의 관리번호를 선택해 🔗 연계 드릴다운으로 체인을 점검하세요.")
+    st.dataframe(
+        allhit[_disp_cols].rename(columns={"이상 케이스 플래그": "점검 케이스"}),
+        use_container_width=True, hide_index=True,
+    )
+    _prnos = allhit["관리번호"].astype(str).tolist() if "관리번호" in allhit.columns else []
+    if _prnos:
+        c_s, c_b = st.columns([3, 1])
+        with c_s:
+            _sel = st.selectbox("점검할 관리번호", _prnos, key=f"closure_sel_{key_suffix}", label_visibility="collapsed")
+        with c_b:
+            if st.button("🔗 연계 보기", key=f"closure_btn_{key_suffix}", use_container_width=True):
+                show_linkage_drawer(_sel)
+
+
 def render_linkage_section(project_key: str, key_suffix: str, title: str | None = None,
                             df_override: pd.DataFrame | None = None):
     """프로젝트 DataFrame 에 머지된 linkage 컬럼을 기반으로 체인 요약 패널을 렌더.
@@ -1821,12 +1894,18 @@ _TABKEY_LABEL = {tk: l for w in _WORKSPACES for (tk, l) in w[3]}
 
 with st.sidebar:
     st.divider()
-    _active_ws_label = option_menu(
+    # 프로그램적 점프(종합현황 요약 버튼 등): _ws_jump_target 가 설정돼 있으면 그 인덱스로
+    # manual_select 강제. (option_menu 는 default_index 만으로는 rerun 시 세션을 덮어쓰므로
+    # manual_select 가 필요하다.)
+    _jump_idx = None
+    if st.session_state.get("_ws_jump_target") in _WS_LABELS:
+        _jump_idx = _WS_LABELS.index(st.session_state.pop("_ws_jump_target"))
+    _menu_kwargs = dict(
         menu_title="워크스페이스",
         options=_WS_LABELS,
         icons=_WS_ICONS,
         menu_icon="columns-gap",
-        default_index=0,
+        default_index=_jump_idx if _jump_idx is not None else 0,
         key="qms_ws_rail",
         styles={
             "container": {"padding": "4px", "background-color": "transparent"},
@@ -1835,6 +1914,9 @@ with st.sidebar:
             "icon": {"font-size": "15px"},
         },
     )
+    if _jump_idx is not None:
+        _menu_kwargs["manual_select"] = _jump_idx
+    _active_ws_label = option_menu(**_menu_kwargs)
 _active_ws = _WS_BY_LABEL.get(_active_ws_label, "overview")
 
 # 활성 워크스페이스의 sub-view 선택(도메인이 2개 이상일 때만 세그먼트 노출).
@@ -1869,6 +1951,29 @@ def _render_tab(tabkey: str) -> bool:
 
 if _render_tab("exec"):
     S.render_header("경영진 품질 대시보드", f"MFDS GMP 점검 대비 KPI | {datetime.now().strftime('%Y-%m-%d')}")
+    st.markdown("---")
+
+    # ── 종결순서 점검 전사 요약 (Task 2.5) ── 각 워크스페이스 점검 건수의 합.
+    _ov_pre = _ov_miss = 0
+    _ws_jump_counts = {}
+    for _wsid in ("qc", "qa", "actions"):
+        _a, _b = _ws_closure_counts(_wsid, F)
+        _ws_jump_counts[_wsid] = (_a, _b)
+        _ov_pre += _a; _ov_miss += _b
+    _sig1, _sig2, _sig3 = st.columns([2, 2, 3])
+    _sig1.metric("🧭 선종결 의심(전사)", f"{_ov_pre}건")
+    _sig2.metric("🧭 종결처리 누락(전사)", f"{_ov_miss}건")
+    with _sig3:
+        st.caption("워크스페이스로 점프(소유 레코드 점검)")
+        _jc1, _jc2, _jc3 = st.columns(3)
+        _ws_label_by_id = {w[0]: w[1] for w in _WORKSPACES}
+        for _col, _wsid in ((_jc1, "qc"), (_jc2, "qa"), (_jc3, "actions")):
+            _p, _m = _ws_jump_counts[_wsid]
+            with _col:
+                if st.button(f"{_ws_label_by_id[_wsid]}\n({_p}/{_m})", key=f"jump_{_wsid}", use_container_width=True):
+                    st.session_state["_ws_jump_target"] = _ws_label_by_id[_wsid]
+                    st.rerun()
+    st.caption("※ 표기 = (선종결 의심 / 종결처리 누락). 클릭 시 해당 워크스페이스로 이동해 상세 점검.")
     st.markdown("---")
 
     # KPI 산출
@@ -3235,6 +3340,16 @@ Streamlit        : {st.__version__}
                 st.error(f"PDF 오류: {_e}")
 
     S.render_footer()
+
+
+# ============================================================================
+# 종결순서 점검 패널 (Task 2.5) — 워크스페이스별 1회, 소유 레코드 기준.
+# _active_ws 로 게이트(현재 워크스페이스가 qc/qa/actions 일 때만 그 소유 점검을 하단에 표시).
+# 어느 sub-view 에 있든 워크스페이스 하단에 일관 노출 → '분산' 요건 충족.
+# ============================================================================
+if _active_ws in _WS_OWNED_PROJECTS:
+    st.markdown("---")
+    render_closure_check(_active_ws, F, key_suffix=f"ws_{_active_ws}")
 
 
 # ============================================================================
