@@ -1097,13 +1097,20 @@ def _linkage_drawer_entry(df: pd.DataFrame, key_suffix: str, title: str | None =
 # 탐지는 기존 '이상 케이스 플래그' 컬럼(refresh_job 이 domain.linkage 로 머지) 재사용:
 #   · 부모종결_자식미종결 = 선종결 의심(본 종결·자식 미완료)
 #   · 자식완료_부모미완료 = 종결처리 누락(자식 완료·본 미종결)
-# 귀속 규칙(CONTENT_MAP / 사양서 정정): QC=oos·investigation / QA=deviation·complain /
-# actions=capa·changemanagement. (일탈은 QA 전사 1곳에만 귀속 → 합계 중복 없음.)
+# 귀속 규칙(CONTENT_MAP / DATA_MAPPING §2~4): 워크스페이스별 소유 프로젝트(상호 배타 →
+# 종합 요약 = 워크스페이스 합, 중복 없음). 일탈은 QA 전사 1곳에만 귀속(사양서 정정).
+#   · QC 시험품질: OOS·조사 (시험실 일탈은 deviation 일부지만 분할 시 중복 → 일탈은 QA 단독 귀속 유지)
+#   · QA 품질운영: 일탈(자사/외주/AI)·고객불만·기한연장
+#   · 조치·변경: CAPA(+Action/모니터링AI)·변경(+AI/영향성/외주)·유효성평가
+# 비고: businesstransfer(업무이전)는 어느 도메인 워크스페이스에도 속하지 않아 점검 귀속 제외
+#       (플래그 0건이라 신호 누락 없음, 원본은 데이터·설정에서 조회). 종합요약=워크스페이스 합 일치.
 # ============================================================================
 _WS_OWNED_PROJECTS = {
     "qc":      ["oos", "investigation"],
-    "qa":      ["deviation", "complain"],
-    "actions": ["capa", "changemanagement"],
+    "qa":      ["deviation", "deviationoutsourcing", "deviationactionitem", "complain", "extension"],
+    "actions": ["capa", "capaactionitem", "actionitem",
+                "changemanagement", "changeactionitem", "changeimpactassessment",
+                "changeoutsourcing", "validityevaluation"],
 }
 _FLAG_PRE = "부모종결_자식미종결"   # 선종결 의심
 _FLAG_MISS = "자식완료_부모미완료"  # 종결처리 누락
