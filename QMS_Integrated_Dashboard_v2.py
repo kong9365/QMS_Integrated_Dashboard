@@ -3543,12 +3543,113 @@ if _render_tab("product_lot"):
     S.render_footer()
 
 if _render_tab("alerts_new"):
-    S.render_header("알림·모니터링", "룰 기반 알림 센터 (Phase 3 신설 예정)")
-    st.markdown("---")
-    st.info(
-        "이 워크스페이스는 **Phase 3 (Task 3.4)** 에서 구현됩니다.\n\n"
-        "- 기한초과 · D-3 임박 · 재발 · 미종결 누적 **룰 관리**\n"
-        "- 워크스페이스/스코프별 구독 + Slack · 이메일 채널(기존 `alert_service` 활용)\n\n"
-        "현재 알림 설정은 **데이터·설정 → 알림 설정** 탭에 있습니다."
-    )
+    S.render_header("알림·모니터링", "기한 위험 · 신규 OOS (읽기 전용 모니터링)")
+    st.caption("※ 모니터링 보조 — 이 화면은 현황 표시 전용입니다. 알림 발송·규칙 편집은 "
+               "데이터·설정 → 알림 설정 탭 또는 스케줄러가 담당합니다.")
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════
+    # ① 기한 위험 모니터링 (전 프로젝트 D-day 재사용 — 신규 로직 0, 건수기여도 합)
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("기한 위험 모니터링 (전 프로젝트)", "①")
+    _over_w = round(sum(weighted_metric_overdue(_d) for _d in F.values()))
+
+    def _wcount_dday(_lo, _hi) -> int:
+        _t = 0
+        for _d in F.values():
+            if _d is None or _d.empty or "D-day" not in _d.columns:
+                continue
+            _dd = _num_series(_d["D-day"], default=99999)
+            _t += _wcount(_d, (_dd >= _lo) & (_dd <= _hi))
+        return _t
+
+    _imm3 = _wcount_dday(0, 3)
+    _imm7 = _wcount_dday(0, 7)
+    _ac = st.columns(3)
+    with _ac[0]:
+        C.signal_card("기한 초과", f"{_over_w:,}건", tone="danger", icon="", sub="D-day < 0 (전사)")
+    with _ac[1]:
+        C.signal_card("D-3 임박", f"{_imm3:,}건", tone="warn", icon="", sub="0 ≤ D-day ≤ 3")
+    with _ac[2]:
+        C.signal_card("D-7 임박", f"{_imm7:,}건", tone="warn", icon="", sub="0 ≤ D-day ≤ 7")
+
+    _risk_frames = []
+    for _pk, _d in F.items():
+        if _d is None or _d.empty or "D-day" not in _d.columns:
+            continue
+        _dd = _num_series(_d["D-day"], default=99999)
+        _sub = _d[_dd <= 7]   # 초과 + 7일 이내 임박
+        if not _sub.empty:
+            _keep = [c for c in ["관리번호", "제목", "작성팀", "기한일", "D-day", "진행상태"] if c in _sub.columns]
+            _f = _sub[_keep].copy()
+            _f.insert(0, "프로젝트", PROJECT_META[_pk]["label"])
+            _risk_frames.append(_f)
+    if _risk_frames:
+        import warnings as _wa
+        with _wa.catch_warnings():
+            _wa.simplefilter("ignore", FutureWarning)
+            _risk = pd.concat(_risk_frames, ignore_index=True)
+        _risk = _risk.sort_values("D-day").head(100)
+        st.caption(f"기한 위험(초과 + 7일 이내) 상위 {len(_risk)}건 — D-day 오름차순")
+        C.data_table(_risk, status=True, height=360)
+        C.linkage_drilldown(_risk["관리번호"].astype(str).tolist(), key="alert_risk",
+                            on_select=show_linkage_drawer)
+    else:
+        S.empty_state("기한 위험 항목이 없습니다.")
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════
+    # ② 신규 OOS 모니터링 (최근 30일 · 등록일 기준 — 기존 데이터 재사용)
+    # ════════════════════════════════════════════════════════════════════
+    _NEW_DAYS = 30
+    S.section_header(f"신규 OOS 모니터링 (최근 {_NEW_DAYS}일 · 등록일)", "②")
+    _new_oos = pd.DataFrame()
+    if not foos.empty and "등록일" in foos.columns:
+        _reg = pd.to_datetime(foos["등록일"], errors="coerce")
+        _cut = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=_NEW_DAYS)
+        _new_oos = foos[_reg.notna() & (_reg >= _cut)].copy()
+    if not _new_oos.empty:
+        _new_w = _wcount(_new_oos)
+        _open_mask = None
+        if "최종 종결 여부(체인)" in _new_oos.columns:
+            _open_mask = ~_new_oos["최종 종결 여부(체인)"].map(
+                lambda v: v is True or str(v).strip().lower() in ("true", "1"))
+        _new_open = _wcount(_new_oos, _open_mask) if _open_mask is not None else 0
+        _nc = st.columns(2)
+        with _nc[0]:
+            C.signal_card(f"최근 {_NEW_DAYS}일 신규 OOS", f"{_new_w:,}건", tone="info", icon="",
+                          sub="등록일 기준 · 건수기여도 합")
+        with _nc[1]:
+            C.signal_card("신규 OOS 미종결", f"{_new_open:,}건", tone="warn", icon="",
+                          sub="최종 종결 여부(체인) == False")
+        _oos_cols = [c for c in ["관리번호", "제목", "품목명", "제조번호", "이상발생 원인",
+                                 "기준 일탈 최종 결과", "진행상태", "D-day"] if c in _new_oos.columns]
+        _new_sorted = (_new_oos.sort_values("등록일", ascending=False)
+                       if "등록일" in _new_oos.columns else _new_oos)
+        C.data_table(_new_sorted[_oos_cols], status=True, height=320)
+        C.linkage_drilldown(_new_oos["관리번호"].astype(str).tolist(), key="alert_newoos",
+                            on_select=show_linkage_drawer)
+    else:
+        S.empty_state(f"최근 {_NEW_DAYS}일 신규 OOS 가 없습니다(선택 연도 기준).")
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════
+    # ③ 알림 규칙·채널 현황 (READ-ONLY — 비밀값/수신자 주소 비표시, 발송·편집 없음)
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("알림 규칙·채널 현황 (읽기 전용)", "③")
+    _slack_on = bool(os.environ.get("QMS_SLACK_WEBHOOK", "").strip())
+    _email_on = bool(os.environ.get("QMS_SMTP_USER", "").strip())
+    _to_on = bool(os.environ.get("QMS_ALERT_TO", "").strip())
+    _status_rows = [
+        {"항목": "규칙", "현황": "기한 초과 (D-day < 0)", "소스": "run_overdue_alert(threshold_days=0)"},
+        {"항목": "Slack 채널", "현황": "설정됨" if _slack_on else "미설정", "소스": "QMS_SLACK_WEBHOOK (.env)"},
+        {"항목": "이메일 채널", "현황": "설정됨" if _email_on else "미설정", "소스": "QMS_SMTP_USER (.env)"},
+        {"항목": "이메일 수신자", "현황": "설정됨" if _to_on else "미설정", "소스": "QMS_ALERT_TO (.env)"},
+    ]
+    C.data_table(pd.DataFrame(_status_rows))
+    st.caption("※ 비밀값·수신자 주소는 표시하지 않습니다(설정 여부만). 발송·규칙 편집·`.env` 쓰기는 "
+               "이 화면에서 하지 않습니다 — 데이터·설정 → 알림 설정 탭 또는 스케줄러가 담당.")
+
     S.render_footer()
