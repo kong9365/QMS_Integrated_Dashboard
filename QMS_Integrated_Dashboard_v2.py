@@ -3282,14 +3282,140 @@ if _active_ws in _WS_OWNED_PROJECTS:
 # 레일에는 지금 노출하되, 본문은 "준비 중 + 예정 내용" 안내로 자리만 잡는다.
 # ============================================================================
 if _render_tab("product_new"):
-    S.render_header("제품·배치 품질", "APQR · 출하 전 확인 (Phase 3 신설 예정)")
-    st.markdown("---")
-    st.info(
-        "이 워크스페이스는 **Phase 3 (Task 3.3)** 에서 구현됩니다.\n\n"
-        "- **APQR(연간품질평가)**: 품목 × 연도별 OOS/일탈/조사/CAPA·재발·원인 집계\n"
-        "- **출하 전 확인(lot)**: 제조번호 입력 → 직접보유+체인 자식 수집 → 종결 시 ✅PASS / 미종결 ⛔HOLD\n\n"
-        "※ 모니터링 보조이며 정식 출하 판정 시스템이 아닙니다."
-    )
+    S.render_header("제품·배치 품질", "APQR · 품목 × 연도")
+    st.caption("※ 모니터링 보조 — 정식 출하 판정 시스템이 아닙니다. lot 디스포지션(PASS/HOLD)은 후속(Task 3.3b).")
+    st.divider()
+
+    _ATTR_NAME = "품목명_귀속"
+    _ATTR_SRC = "귀속출처"
+
+    # ════════════════════════════════════════════════════════════════════
+    # ① 품목 귀속 커버리지 (전체 데이터 기준 — 체인 전파 정직 표기)
+    #   원본 품목 컬럼 불변, attribution.py 파생(귀속출처)만 사용. 고유 관리번호 기준.
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("품목 귀속 커버리지 (전체 데이터 기준)", "①")
+    _src_uniq: dict[str, int] = {}
+    _seen_prno: set[str] = set()
+    for _k, _d in ALL_DFS.items():
+        if _d is None or _d.empty or "관리번호" not in _d.columns or _ATTR_SRC not in _d.columns:
+            continue
+        _b = _d.drop_duplicates(subset=["관리번호"])
+        for _prno, _s in zip(_b["관리번호"].astype(str), _b[_ATTR_SRC]):
+            if _prno in _seen_prno:
+                continue
+            _seen_prno.add(_prno)
+            _src_uniq[_s] = _src_uniq.get(_s, 0) + 1
+    _self_n = _src_uniq.get("자체보유", 0)
+    _inh_n = _src_uniq.get("상속", 0)
+    _none_n = _src_uniq.get("미분류", 0)
+    _multi_n = _src_uniq.get("복수(미분류)", 0)
+    _cov1, _cov2, _cov3 = st.columns(3)
+    with _cov1:
+        C.signal_card("품목 귀속 (자체+상속)", f"{_self_n + _inh_n:,}건", tone="ok", icon="",
+                      sub=f"자체보유 {_self_n:,} · 상속(체인) {_inh_n:,}")
+    with _cov2:
+        C.signal_card("전사/미분류", f"{_none_n:,}건", tone="neutral", icon="",
+                      sub="품목 앵커 없음(변경계보·고립)")
+    with _cov3:
+        C.signal_card("복수(미분류)", f"{_multi_n:,}건", tone=("warn" if _multi_n else "neutral"), icon="",
+                      sub="도달 조상 품목 충돌")
+    st.caption("귀속출처: **자체보유**=레코드 자체 품목 · **상속**=품질계보 조상(OOS·일탈)에서 체인 전파 · "
+               "**미분류**=귀속 불가. 원본 `품목코드`/`품목명` 컬럼은 불변, 파생(`품목명_귀속`)만 집계에 사용.")
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════
+    # ② 품목별 품질 이벤트 매트릭스 (선택 연도, 건수기여도 합)
+    #   행=품목명_귀속(미분류 포함) · 열=6 품질 카테고리(기존 프로젝트 분류 재사용) + 합계.
+    #   값=_wgroupby(건수기여도 합, 없으면 size) — 기존 가중 집계 헬퍼 재사용.
+    # ════════════════════════════════════════════════════════════════════
+    _yr_label = ", ".join(str(y) for y in selected_years) if selected_years else "전체"
+    S.section_header(f"품목별 품질 이벤트 — {_yr_label} (건수기여도 합)", "②")
+    _APQR_CATS = [
+        ("OOS", ["oos"]),
+        ("일탈", ["deviation", "deviationoutsourcing", "deviationactionitem"]),
+        ("조사", ["investigation"]),
+        ("CAPA", ["capa", "capaactionitem", "actionitem"]),
+        ("변경", ["changemanagement", "changeactionitem", "changeimpactassessment", "changeoutsourcing"]),
+        ("불만", ["complain"]),
+    ]
+    # 카테고리별 집계는 **프로젝트별 _wgroupby 후 합산**한다(신규 집계 로직 0, 기존 헬퍼 재사용).
+    # 카테고리 안에 건수기여도 보유(OOS/일탈)·미보유(조사/CAPA…) 프로젝트가 섞일 때 concat 후
+    # 집계하면 미보유 행의 NaN 건수기여도가 0 처리되어 누락되므로, 프로젝트 단위로 집계해 합친다.
+    _cat_map: dict[str, dict] = {}
+    _items: set[str] = set()
+    for _cat, _keys in _APQR_CATS:
+        _acc: dict[str, int] = {}
+        for _k in _keys:
+            _d = F.get(_k)
+            if _d is None or _d.empty or _ATTR_NAME not in _d.columns:
+                continue
+            _g = _wgroupby(_d, _ATTR_NAME, name="건수")   # 프로젝트별 건수기여도 합(없으면 size)
+            for _it, _v in zip(_g[_ATTR_NAME].astype(str), _g["건수"]):
+                _acc[_it] = _acc.get(_it, 0) + int(_v)
+                _items.add(_it)
+        _cat_map[_cat] = _acc
+
+    if not _items:
+        S.empty_state("선택한 연도에 해당하는 품질 이벤트가 없습니다.")
+    else:
+        _rows = []
+        for _it in _items:
+            _row = {"품목명": _it or "(품목명 없음)"}
+            _tot = 0
+            for _cat, _ in _APQR_CATS:
+                _v = int(_cat_map.get(_cat, {}).get(_it, 0))
+                _row[_cat] = _v
+                _tot += _v
+            _row["합계"] = _tot
+            _rows.append(_row)
+        _mat = pd.DataFrame(_rows).sort_values("합계", ascending=False).reset_index(drop=True)
+        st.caption(f"품목 {len(_mat)}행(전사/미분류 포함) · OOS·일탈은 건수기여도 가중, 그 외는 건수. "
+                   "변경·불만은 품목 귀속 약함 → 대부분 전사/미분류.")
+        C.data_table(
+            _mat, height=420,
+            column_config={_c: st.column_config.NumberColumn(_c, format="%d")
+                           for _c in ["OOS", "일탈", "조사", "CAPA", "변경", "불만", "합계"]},
+        )
+
+        st.divider()
+
+        # ════════════════════════════════════════════════════════════════
+        # ③ 품목 드릴다운 — 이벤트 목록(상태 Pill·D-day·관리번호) + 🔗 연계 추적
+        # ════════════════════════════════════════════════════════════════
+        S.section_header("품목 드릴다운 — 이벤트 추적", "③")
+        _sel_item = st.selectbox("품목 선택", _mat["품목명"].tolist(), key="apqr_item_sel")
+        _sel_key = "" if _sel_item == "(품목명 없음)" else _sel_item
+        # 프로젝트별 스키마가 달라 전열 concat 시 all-NA 컬럼 경고 → 표시 컬럼만 투영 후 concat.
+        _EV_COLS = ["관리번호", "프로젝트", "제목", "작성팀", "기한일", "D-day", "진행상태", "완료여부"]
+        _ev_frames = []
+        for _cat, _keys in _APQR_CATS:
+            for _k in _keys:
+                _d = F.get(_k)
+                if _d is None or _d.empty or _ATTR_NAME not in _d.columns:
+                    continue
+                _sub = _d[_d[_ATTR_NAME].astype(str) == str(_sel_key)]
+                if not _sub.empty:
+                    _sub2 = _sub[[c for c in _EV_COLS if c in _sub.columns]].copy()
+                    _sub2.insert(0, "카테고리", _cat)
+                    _ev_frames.append(_sub2)
+        if _ev_frames:
+            # 이종 프로젝트 스키마 정렬 시 all-NA 컬럼 dtype FutureWarning(무해) — 이 concat 한정 억제.
+            import warnings as _w
+            with _w.catch_warnings():
+                _w.simplefilter("ignore", FutureWarning)
+                _ev = pd.concat(_ev_frames, ignore_index=True)
+            _ev_cols = [c for c in ["카테고리", "관리번호", "프로젝트", "제목", "작성팀", "기한일", "D-day", "진행상태"]
+                        if c in _ev.columns]
+            _ev_disp = _ev[_ev_cols].sort_values("D-day") if "D-day" in _ev.columns else _ev[_ev_cols]
+            st.caption(f"**{_sel_item}** — 이벤트 {len(_ev)}건(선택 연도)")
+            C.data_table(_ev_disp, status=True, height=340)
+            _ev_prnos = _ev["관리번호"].astype(str).tolist() if "관리번호" in _ev.columns else []
+            C.linkage_drilldown(_ev_prnos, key="apqr_item", on_select=show_linkage_drawer,
+                                caption="관리번호 선택 → 🔗 로 부모-자식 체인·종결여부 추적")
+        else:
+            S.empty_state("선택한 품목의 이벤트가 없습니다.")
+
     S.render_footer()
 
 if _render_tab("alerts_new"):
