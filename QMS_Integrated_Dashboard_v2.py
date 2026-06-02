@@ -17,6 +17,7 @@ os.environ["PYTHONIOENCODING"] = "utf-8"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
+from streamlit_option_menu import option_menu  # 좌측 워크스페이스 레일(Task 2.1)
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -499,14 +500,7 @@ def _trigger_refresh_job_background() -> bool:
         return False
 
 
-# 수동 갱신: 동기 실행(블로킹) 금지. 백그라운드로 refresh_job 만 트리거하고 안내(Task 1.3).
-# 상시 운영의 정규 갱신은 스케줄러(Task 1.4)가 담당한다.
-if st.sidebar.button("↻ 백그라운드 갱신 시작", use_container_width=True, type="primary"):
-    if _trigger_refresh_job_background():
-        st.cache_data.clear()  # 다음 렌더에서 새 캐시를 읽도록 메모이즈만 비움(디스크 캐시는 유지)
-        st.sidebar.info("갱신 시작됨 — 수집 완료 후 새로고침하면 반영됩니다.")
-    else:
-        st.sidebar.warning("갱신 시작 실패 — 스케줄러(Task 1.4) 또는 수동 실행을 사용하세요.")
+# (수동 갱신 버튼은 Task 2.3 에서 상단 필터바로 이전됨 — 사이드바 중복 제거.)
 
 _load_progress = st.sidebar.progress(0)
 _load_caption = st.sidebar.empty()
@@ -591,8 +585,12 @@ except Exception as _linkage_err:
     st.session_state["qms_linkage_ctx"] = None
     st.sidebar.warning(f"연계 인덱스 빌드 실패: {_linkage_err}")
 
-# 필터 (사이드바 상단에 표시)
-st.sidebar.markdown("**필터**")
+# ============================================================================
+# 글로벌 필터바 (Task 2.3) — 상단 고정 바로 이전 (사이드바 → 메인 상단)
+# 시각: docs/prototype.html 상단바. 구성: ①수집상태 ②필터칩(연도기준·연도·진행상태·D-day)
+# ③검색 ④갱신·Excel. 역할(QC/QA) 없음. 필터 로직/변수는 불변 — 위치·표현만 이동.
+# 필터값은 세션 위젯 key 로 워크스페이스 전환에도 유지된다.
+# ============================================================================
 _all_year_dfs = [d for d in ALL_DFS.values() if not d.empty and ("연도" in d.columns or "연도_등록" in d.columns)]
 _year_set = set()
 for d in _all_year_dfs:
@@ -601,82 +599,72 @@ for d in _all_year_dfs:
             _year_set |= {int(y) for y in d[_ycol].dropna().unique()}
 years_available = sorted(_year_set, reverse=True) if _year_set else [datetime.now().year]
 current_year = datetime.now().year
-
-year_basis = st.sidebar.radio(
-    "연도 기준",
-    ("발견일시", "등록일"),
-    index=0,
-    horizontal=True,
-    help="QMS 웹 과제 목록은 기본 필터가 등록일(regDate)입니다. 시험 발견일과 등록일이 다른 건이 있으면 건수가 달라집니다.",
-)
-YEAR_FILTER_COL = "연도_등록" if year_basis == "등록일" else "연도"
-
 _default_years = (
     [2026]
     if 2026 in years_available
     else ([current_year] if current_year in years_available else (years_available[:1] if years_available else []))
 )
-selected_years = st.sidebar.multiselect("연도", years_available, default=_default_years)
-status_filter = st.sidebar.radio("진행상태", ["전체", "진행중", "완료"], horizontal=True)
-dday_filter = st.sidebar.radio("기한일 기준", ["전체", "D-day 임박 (7일)", "기한 초과"], horizontal=False)
 
-# 필터 초기화 버튼
-if S.filter_reset_button():
-    # 세션에서 필터 관련 키 리셋
-    for _k in list(st.session_state.keys()):
-        if _k.startswith("_") or _k in ("qms_linkage_ctx", "_cache_fetch_time"):
-            continue
-        del st.session_state[_k]
-    st.rerun()
-
-st.sidebar.divider()
-st.sidebar.markdown("**데이터 현황**")
-total_all = 0
-for pk, df_p in ALL_DFS.items():
-    label = PROJECT_META[pk]["label"]
-    if pk == "deviationoutsourcing":
-        st.sidebar.caption(f"📎 {label}: 「일탈」에 자사+외주 통합 수집")
-        continue
-    n = df_p["관리번호"].nunique() if not df_p.empty and "관리번호" in df_p.columns else len(df_p)
-    total_all += n
-    if df_p.empty:
-        st.sidebar.caption(f"⚪ {label}: 0건")
-    else:
-        st.sidebar.caption(f"🟢 {label}: {n}건")
-st.sidebar.success(f"총 {total_all}건")
-
-# ─── 갱신 신뢰성 표기 (Task 1.3) ───
-# refresh_job 이 기록한 _meta.json 기반으로 "마지막 갱신 시각 + 수집 상태 N/16"를 표기.
-# 실패 프로젝트가 있으면 경고 배지로 노출한다(어느 프로젝트가 옛 캐시인지 알 수 있게).
-# NOTE(Phase 2): 이 표기는 종합현황 "수집 상태 카드"로 이전 예정(현재는 11탭 구조라 사이드바).
+# 수집 상태(_meta.json) 문자열 — 상단바 ①
 _refresh_meta = DA.get_refresh_meta()
 if _refresh_meta.get("source") == "none":
-    # refresh_job 미실행(앱이 직접 채운 캐시만 존재) → 시각 미상. 안내만.
-    st.sidebar.caption("마지막 갱신: (refresh_job 미실행 — 스케줄 수집 전)")
+    _status_md = "🟡 **수집 상태**: refresh_job 미실행"
+    _failed = []
 else:
-    _last = _refresh_meta.get("last_refresh") or "(미상)"
     _ok = _refresh_meta.get("ok_count", 0)
     _tot = _refresh_meta.get("total_count", 0)
-    st.sidebar.caption(f"마지막 갱신: {_last}")
-    if _tot and _ok >= _tot:
-        st.sidebar.caption(f"수집 상태: ✅ {_ok}/{_tot}")
-    else:
-        st.sidebar.caption(f"수집 상태: ⚠️ {_ok}/{_tot}")
-        _failed = [p for p, v in (_refresh_meta.get("projects") or {}).items()
-                   if isinstance(v, dict) and v.get("status") != "ok"]
-        if _failed:
-            _shown = ", ".join(_failed[:6]) + (" 외" if len(_failed) > 6 else "")
-            st.sidebar.warning(f"수집 실패 {len(_failed)}건(옛 캐시 표시): {_shown}")
+    _last = _refresh_meta.get("last_refresh") or "(미상)"
+    _badge = "✅" if (_tot and _ok >= _tot) else "⚠️"
+    _status_md = f"{_badge} **{_ok}/{_tot}** · 갱신 {_last}"
+    _failed = [p for p, v in (_refresh_meta.get("projects") or {}).items()
+               if isinstance(v, dict) and v.get("status") != "ok"]
 
-st.sidebar.caption(
-    f"⏱️ 16스텝 로드 {_fetch_elapsed:.1f}s "
-    f"(캐시 히트 시 ≈0s)"
-)
-S.cache_age_bar(_fetch_elapsed, ttl=1800)
-with st.sidebar.expander("스텝별 소요", expanded=False):
-    _slow = sorted(_step_times, key=lambda x: -x[1])[:16]
-    for _lbl, _sec in _slow:
-        st.caption(f"• {_lbl}: {_sec:.2f}s")
+# 총 건수(상단 수집상태 보조) — 사이드바 16개 캡션 대체
+total_all = 0
+for pk, df_p in ALL_DFS.items():
+    if pk == "deviationoutsourcing":
+        continue
+    total_all += df_p["관리번호"].nunique() if not df_p.empty and "관리번호" in df_p.columns else len(df_p)
+
+# ─── 상단 고정 필터바 렌더 ───
+_topbar = st.container()
+with _topbar:
+    _c_status, _c_yb, _c_year, _c_status_f, _c_dday, _c_actions = st.columns([2.6, 1.5, 1.4, 1.6, 1.7, 1.4])
+    with _c_status:
+        st.caption("수집 상태")
+        st.markdown(_status_md)
+        st.caption(f"총 {total_all:,}건 · 로드 {_fetch_elapsed:.1f}s")
+    with _c_yb:
+        year_basis = st.radio(
+            "연도 기준", ("발견일시", "등록일"), index=0, horizontal=True, key="flt_year_basis",
+            help="QMS 과제 목록 기본은 등록일(regDate). 발견일과 다르면 건수가 달라집니다.",
+        )
+    with _c_year:
+        selected_years = st.multiselect("연도", years_available, default=_default_years, key="flt_years")
+    with _c_status_f:
+        status_filter = st.radio("진행상태", ["전체", "진행중", "완료"], horizontal=True, key="flt_status")
+    with _c_dday:
+        dday_filter = st.radio("기한", ["전체", "D-day 임박 (7일)", "기한 초과"], horizontal=False, key="flt_dday")
+    with _c_actions:
+        st.caption("작업")
+        if st.button("↻ 백그라운드 갱신", use_container_width=True, key="top_refresh"):
+            if _trigger_refresh_job_background():
+                st.cache_data.clear()
+                st.toast("갱신 시작됨 — 완료 후 새로고침 시 반영")
+            else:
+                st.toast("갱신 시작 실패", icon="⚠️")
+        if st.button("↺ 필터 초기화", use_container_width=True, key="top_filter_reset"):
+            for _k in list(st.session_state.keys()):
+                # 필터 위젯 key(flt_*)만 리셋. 레일/연계 ctx/캐시시각은 보존.
+                if _k.startswith("flt_"):
+                    del st.session_state[_k]
+            st.rerun()
+if _failed:
+    _shown = ", ".join(_failed[:6]) + (" 외" if len(_failed) > 6 else "")
+    _topbar.warning(f"수집 실패 {len(_failed)}건(옛 캐시로 표시 중): {_shown}")
+st.divider()
+
+YEAR_FILTER_COL = "연도_등록" if year_basis == "등록일" else "연도"
 
 
 def _month_col_for_df(df: pd.DataFrame) -> str:
@@ -1006,6 +994,182 @@ _LINKAGE_FLAG_HELP = {
         "후속 조치가 끝났으므로 **본 프로젝트 종결 처리 누락** 가능성이 있어 점검이 필요합니다."
     ),
 }
+
+
+@st.dialog("🔗 연계 드릴다운", width="large")
+def show_linkage_drawer(prno: str):
+    """[Task 2.4] 레코드별 부모-자식 체인 드릴다운 드로어(st.dialog 모달).
+
+    시각: docs/prototype.html drawer. 로직: domain.linkage(summarize_*/resolve_chain)
+    + 세션 ctx(build_ctx) 재사용(rebind, 재작성 금지). 전 워크스페이스에서 동일 호출.
+    표시: 부모 체인 → 본 레코드 → 자식 체인 흐름 + 최종 종결 여부(체인) + 지연일.
+    """
+    from qms_pro.domain.linkage import summarize_children, summarize_parent, resolve_chain
+    ctx = st.session_state.get("qms_linkage_ctx")
+    if ctx is None:
+        st.warning("연계 인덱스가 없습니다. 상단의 '백그라운드 갱신' 후 새로고침하세요.")
+        return
+    key = str(prno).strip()
+    row = ctx.by_prno.get(key)
+    if not row:
+        st.info(f"관리번호 **{key}** 의 연계 정보를 찾지 못했습니다.")
+        return
+
+    sc = summarize_children(ctx, key)
+    sp = summarize_parent(ctx, key)
+    chain_closed = bool(sc.get("최종 종결 여부(체인)"))
+    open_n = int(sc.get("자식 미종결 수") or 0)
+    delay = sc.get("자식 최대 지연일")
+
+    # ── 헤더: 본 레코드 + 종결 판정 ──
+    _proj = str(row.get("프로젝트", "") or "?")
+    _title = str(row.get("제목", "") or "")
+    st.markdown(f"**{_proj}** · `{key}`" + (f" — {_title}" if _title else ""))
+    cc1, cc2, cc3 = st.columns(3)
+    cc1.metric("최종 종결(체인)", "✅ 종결" if chain_closed else "⛔ 미종결")
+    cc2.metric("미종결 자식", f"{open_n}건")
+    cc3.metric("최대 지연일", f"{int(delay)}일" if delay not in (None, "") else "—")
+
+    # ── 부모(조상) 체인 ──
+    st.markdown("---")
+    st.markdown("**상위(부모·조상) 체인**")
+    parent_prno = str(sp.get("부모 관리번호", "") or "")
+    if parent_prno:
+        top = str(sp.get("최상위 조상 관리번호", "") or "")
+        depth = sp.get("체인 내 위치(깊이)", 1)
+        st.caption(
+            f"최상위 `{top}` ({sp.get('최상위 조상 프로젝트','')}) "
+            f"→ … → 부모 `{parent_prno}` ({sp.get('부모 프로젝트','')}) → **본 레코드** (깊이 {depth})"
+        )
+    else:
+        st.caption("부모 없음 — 이 레코드가 체인 루트입니다.")
+
+    # ── 자식(후손) 체인 ──
+    st.markdown("**하위(자식·후손) 체인**")
+    st.caption(f"자식 구성: {sc.get('자식 구성') or '없음'} · 전체 자식 {int(sc.get('자식 수(전체)') or 0)}건")
+    desc = resolve_chain(ctx, key, "descendants")
+    if desc:
+        rows = []
+        for n in desc:
+            npr = str(n.get("관리번호", "") or "")
+            closed = npr in ctx.closure_set
+            rows.append({
+                "관리번호": npr,
+                "프로젝트": n.get("프로젝트", ""),
+                "제목": (str(n.get("제목", "") or ""))[:40],
+                "종결": "✅" if closed else "⛔",
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.caption("연결된 자식 워크플로우가 없습니다.")
+
+    # 미종결 목록(있으면)
+    open_list = sc.get("자식 미종결 목록") or []
+    if open_list:
+        st.markdown(f"**미종결 자식 {len(open_list)}건**: " + ", ".join(f"`{p}`" for p in open_list[:20]))
+
+
+def _linkage_drawer_entry(df: pd.DataFrame, key_suffix: str, title: str | None = None):
+    """[Task 2.4] '연계 현황' sub-tab 을 대체하는 드로어 진입 UI.
+
+    상세 표의 관리번호를 선택 → '🔗 연계 보기' 버튼 → show_linkage_drawer 모달.
+    (기존 render_linkage_section 의 섹션형 패널 대신, 레코드별 드릴다운으로 대체.)
+    """
+    if title:
+        S.section_header(title)
+    if df is None or df.empty or "관리번호" not in df.columns:
+        st.info("연계를 조회할 데이터가 없습니다.")
+        return
+    prnos = (
+        df.drop_duplicates(subset=["관리번호"])["관리번호"].astype(str).tolist()
+    )
+    st.caption("관리번호를 선택하면 부모-자식 체인과 최종 종결 여부(체인)·지연일을 모달로 봅니다.")
+    c_sel, c_btn = st.columns([3, 1])
+    with c_sel:
+        sel = st.selectbox("관리번호", prnos, key=f"linkdrawer_sel_{key_suffix}", label_visibility="collapsed")
+    with c_btn:
+        if st.button("🔗 연계 보기", key=f"linkdrawer_btn_{key_suffix}", use_container_width=True):
+            show_linkage_drawer(sel)
+
+
+# ============================================================================
+# 종결순서 점검 (Task 2.5) — 워크스페이스 분산 + 종합현황 요약
+# 탐지는 기존 '이상 케이스 플래그' 컬럼(refresh_job 이 domain.linkage 로 머지) 재사용:
+#   · 부모종결_자식미종결 = 선종결 의심(본 종결·자식 미완료)
+#   · 자식완료_부모미완료 = 종결처리 누락(자식 완료·본 미종결)
+# 귀속 규칙(CONTENT_MAP / DATA_MAPPING §2~4): 워크스페이스별 소유 프로젝트(상호 배타 →
+# 종합 요약 = 워크스페이스 합, 중복 없음). 일탈은 QA 전사 1곳에만 귀속(사양서 정정).
+#   · QC 시험품질: OOS·조사 (시험실 일탈은 deviation 일부지만 분할 시 중복 → 일탈은 QA 단독 귀속 유지)
+#   · QA 품질운영: 일탈(자사/외주/AI)·고객불만·기한연장
+#   · 조치·변경: CAPA(+Action/모니터링AI)·변경(+AI/영향성/외주)·유효성평가
+# 비고: businesstransfer(업무이전)는 어느 도메인 워크스페이스에도 속하지 않아 점검 귀속 제외
+#       (플래그 0건이라 신호 누락 없음, 원본은 데이터·설정에서 조회). 종합요약=워크스페이스 합 일치.
+# ============================================================================
+_WS_OWNED_PROJECTS = {
+    "qc":      ["oos", "investigation"],
+    "qa":      ["deviation", "deviationoutsourcing", "deviationactionitem", "complain", "extension"],
+    "actions": ["capa", "capaactionitem", "actionitem",
+                "changemanagement", "changeactionitem", "changeimpactassessment",
+                "changeoutsourcing", "validityevaluation"],
+}
+_FLAG_PRE = "부모종결_자식미종결"   # 선종결 의심
+_FLAG_MISS = "자식완료_부모미완료"  # 종결처리 누락
+
+
+def _closure_counts(df: pd.DataFrame) -> tuple[int, int]:
+    """DF 에서 (선종결 의심, 종결처리 누락) 건수. 관리번호 기준 1:1(중복 제거)."""
+    if df is None or df.empty or "이상 케이스 플래그" not in df.columns:
+        return 0, 0
+    base = df.drop_duplicates(subset=["관리번호"]) if "관리번호" in df.columns else df
+    flags = base["이상 케이스 플래그"].fillna("")
+    return int(flags.str.contains(_FLAG_PRE).sum()), int(flags.str.contains(_FLAG_MISS).sum())
+
+
+def _ws_closure_counts(ws_id: str, dfs: dict) -> tuple[int, int]:
+    """워크스페이스 소유 프로젝트들의 점검 건수 합(필터 적용 DF=dfs 기준)."""
+    pre = miss = 0
+    for pk in _WS_OWNED_PROJECTS.get(ws_id, []):
+        a, b = _closure_counts(dfs.get(pk))
+        pre += a; miss += b
+    return pre, miss
+
+
+def render_closure_check(ws_id: str, dfs: dict, key_suffix: str):
+    """[Task 2.5] 워크스페이스 소유 레코드의 종결순서 점검 케이스 목록 + 🔗 드로어."""
+    S.section_header("종결순서 점검 (소유 레코드 기준)", "🧭")
+    owned = _WS_OWNED_PROJECTS.get(ws_id, [])
+    # 소유 프로젝트들의 플래그 보유 레코드만 모음
+    frames = []
+    for pk in owned:
+        d = dfs.get(pk)
+        if d is None or d.empty or "이상 케이스 플래그" not in d.columns:
+            continue
+        b = d.drop_duplicates(subset=["관리번호"]) if "관리번호" in d.columns else d
+        hit = b[b["이상 케이스 플래그"].fillna("").str.contains(f"{_FLAG_PRE}|{_FLAG_MISS}", na=False)]
+        if not hit.empty:
+            frames.append(hit)
+    pre_n, miss_n = _ws_closure_counts(ws_id, dfs)
+    cc1, cc2 = st.columns(2)
+    cc1.metric("선종결 의심", f"{pre_n}건", help=_LINKAGE_FLAG_HELP[_FLAG_PRE])
+    cc2.metric("종결처리 누락", f"{miss_n}건", help=_LINKAGE_FLAG_HELP[_FLAG_MISS])
+    if not frames:
+        st.success("점검 대상 케이스가 없습니다 — 소유 레코드 모두 종결순서 정상.")
+        return
+    allhit = pd.concat(frames, ignore_index=True)
+    _disp_cols = [c for c in ["관리번호", "프로젝트", "제목", "진행상태", "이상 케이스 플래그", "자식 미종결 수"] if c in allhit.columns]
+    st.caption("행의 관리번호를 선택해 🔗 연계 드릴다운으로 체인을 점검하세요.")
+    st.dataframe(
+        allhit[_disp_cols].rename(columns={"이상 케이스 플래그": "점검 케이스"}),
+        use_container_width=True, hide_index=True,
+    )
+    _prnos = allhit["관리번호"].astype(str).tolist() if "관리번호" in allhit.columns else []
+    if _prnos:
+        c_s, c_b = st.columns([3, 1])
+        with c_s:
+            _sel = st.selectbox("점검할 관리번호", _prnos, key=f"closure_sel_{key_suffix}", label_visibility="collapsed")
+        with c_b:
+            if st.button("🔗 연계 보기", key=f"closure_btn_{key_suffix}", use_container_width=True):
+                show_linkage_drawer(_sel)
 
 
 def render_linkage_section(project_key: str, key_suffix: str, title: str | None = None,
@@ -1671,9 +1835,8 @@ def render_event_category_tab(
             st.info("연계 분석 컨텍스트가 없습니다.")
         else:
             # 해당 kind 행들의 관리번호만으로 서브셋 만들어 render_linkage_section 내부 로직과 동일하게 출력
-            render_linkage_section("deviation", key_suffix=f"{key_prefix}_link",
-                                    title=f"{label} 체인 연계 현황",
-                                    df_override=ftab)
+            _linkage_drawer_entry(ftab, key_suffix=f"{key_prefix}_link",
+                                  title=f"{label} 연계 드릴다운")
 
     # ─── 원본 데이터 ───────────────────────────────────────────────────
     with tab_raw:
@@ -1706,236 +1869,249 @@ _overdue_all_count = sum(
 )
 _deadline_label = f"⏰ 기한관리 ({_overdue_all_count}건 초과)" if _overdue_all_count > 0 else "⏰ 기한관리"
 
-tab_exec, tab_oos, tab_dev, tab_incident, tab_inv, tab_capa, tab_change, \
-tab_complain, tab_workflow, tab_deadline, tab_settings = st.tabs([
-    "📊 KPI",
-    "🔬 OOS", "🧪 일탈", "⚠️ 인시던트", "🔍 조사",
-    "✅ CAPA관리", "🔄 변경관리", "📢 고객불만",
-    "🔗 워크플로우", _deadline_label, "⚙️ 설정",
-])
+# ============================================================================
+# 좌측 워크스페이스 레일 (Task 2.1) — 11 상단탭 → 7 워크스페이스
+# 구조: CONTENT_MAP.md 매핑. 시각: docs/prototype.html(좌측 레일). 가로 sticky 탭 제거로
+# 헤더 클릭 가로채기 현상 해소. 기존 탭 본문(렌더 함수 호출)은 rebind(재배치)만, 로직 불변.
+#
+# 동작: 사이드바 option_menu 로 워크스페이스 선택 → 그 안에서 도메인이 여럿이면 sub-view
+# (segmented_control)로 1개 선택. 각 기존 'with tab_x:' 블록은 'if _render_tab("x"):' 로 바뀌어
+# (1줄 치환, 본문/들여쓰기 불변) 활성 sub-view 일 때만 실행된다.
+# ============================================================================
+# 워크스페이스 정의: (id, 라벨, Bootstrap아이콘, [(탭키, sub-view 라벨), ...])
+_WORKSPACES = [
+    ("overview", "종합 현황",     "grid-1x2-fill",
+        [("exec", "경영진 KPI"), ("workflow", "워크플로우 연계"), ("deadline", "기한 관리")]),
+    ("qc",       "QC 시험품질",   "eyedropper",
+        [("oos", "OOS"), ("inv", "조사")]),
+    ("qa",       "QA 품질운영",   "shield-check",
+        [("dev", "일탈"), ("incident", "인시던트"), ("complain", "고객불만")]),
+    ("actions",  "조치·변경",     "arrow-repeat",
+        [("capa", "CAPA·Action"), ("change", "변경관리")]),
+    ("product",  "제품·배치품질", "box-seam",          [("product_new", "제품·배치품질")]),
+    ("alerts",   "알림·모니터링", "bell",              [("alerts_new", "알림·모니터링")]),
+    ("data",     "데이터·설정",   "table",             [("settings", "설정")]),
+]
+_WS_LABELS = [w[1] for w in _WORKSPACES]
+_WS_ICONS = [w[2] for w in _WORKSPACES]
+_WS_BY_LABEL = {w[1]: w[0] for w in _WORKSPACES}
+_WS_SUBVIEWS = {w[0]: w[3] for w in _WORKSPACES}          # ws_id -> [(tabkey, label)]
+_TABKEY_TO_WS = {tk: w[0] for w in _WORKSPACES for (tk, _l) in w[3]}
+_TABKEY_LABEL = {tk: l for w in _WORKSPACES for (tk, l) in w[3]}
+
+with st.sidebar:
+    st.divider()
+    # 프로그램적 점프(종합현황 요약 버튼 등): _ws_jump_target 가 설정돼 있으면 그 인덱스로
+    # manual_select 강제. (option_menu 는 default_index 만으로는 rerun 시 세션을 덮어쓰므로
+    # manual_select 가 필요하다.)
+    _jump_idx = None
+    if st.session_state.get("_ws_jump_target") in _WS_LABELS:
+        _jump_idx = _WS_LABELS.index(st.session_state.pop("_ws_jump_target"))
+    _menu_kwargs = dict(
+        menu_title="워크스페이스",
+        options=_WS_LABELS,
+        icons=_WS_ICONS,
+        menu_icon="columns-gap",
+        default_index=_jump_idx if _jump_idx is not None else 0,
+        key="qms_ws_rail",
+        styles={
+            "container": {"padding": "4px", "background-color": "transparent"},
+            "nav-link": {"font-size": "14px", "font-weight": "600", "--hover-color": "#eef1f8"},
+            "nav-link-selected": {"background-color": S.ACCENT_BLUE},
+            "icon": {"font-size": "15px"},
+        },
+    )
+    if _jump_idx is not None:
+        _menu_kwargs["manual_select"] = _jump_idx
+    _active_ws_label = option_menu(**_menu_kwargs)
+_active_ws = _WS_BY_LABEL.get(_active_ws_label, "overview")
+
+# 활성 워크스페이스의 sub-view 선택(도메인이 2개 이상일 때만 세그먼트 노출).
+_subviews = _WS_SUBVIEWS.get(_active_ws, [])
+if len(_subviews) > 1:
+    _sub_labels = [l for (_tk, l) in _subviews]
+    # 기한 관리 라벨에 초과 배지 반영(기존 _deadline_label 취지 유지)
+    _sub_labels = [(f"{l} ({_overdue_all_count}건 초과)" if tk == "deadline" and _overdue_all_count > 0 else l)
+                   for (tk, l) in _subviews]
+    _picked = st.segmented_control(
+        "보기", options=_sub_labels, default=_sub_labels[0],
+        key=f"subview_{_active_ws}", label_visibility="collapsed",
+    )
+    _idx = _sub_labels.index(_picked) if _picked in _sub_labels else 0
+    _active_tabkey = _subviews[_idx][0]
+else:
+    _active_tabkey = _subviews[0][0] if _subviews else None
+
+
+def _render_tab(tabkey: str) -> bool:
+    """기존 'with tab_x:' 를 대체하는 가드. 활성 워크스페이스의 선택된 sub-view 일 때만 True.
+
+    (Python with 본문은 항상 실행되므로 no-op 컨텍스트로는 비활성 탭이 메인에 새어나온다.
+     그래서 'with tab_x:' → 'if _render_tab(\"x\"):' 1줄 치환으로 본문 실행 자체를 가드한다.)
+    """
+    return tabkey == _active_tabkey
 
 
 # ============================================================================
 # 탭 1: 경영진 대시보드
 # ============================================================================
 
-with tab_exec:
-    S.render_header("경영진 품질 대시보드", f"MFDS GMP 점검 대비 KPI | {datetime.now().strftime('%Y-%m-%d')}")
-    st.markdown("---")
-
-    # KPI 산출
-    def _completion_rate(df):
-        if df.empty or "완료여부" not in df.columns:
-            return 0.0
-        return safe_pct((df["완료여부"] == "C").sum(), len(df))
+if _render_tab("exec"):
+    S.render_header("경영진 품질 대시보드", f"경영진·전사 통제탑 | MFDS GMP 점검 대비 | {datetime.now().strftime('%Y-%m-%d')}")
 
     primary_year = selected_years[0] if selected_years else current_year
     prev_year = primary_year - 1
 
-    capa_all = pd.concat([fcapa, fcapaai, fai], ignore_index=True) if any(not d.empty for d in [fcapa, fcapaai, fai]) else pd.DataFrame()
-    capa_rate = _completion_rate(capa_all)
-    chg_all = pd.concat([fchg, fchgai], ignore_index=True) if any(not d.empty for d in [fchg, fchgai]) else pd.DataFrame()
-    change_rate = _completion_rate(chg_all)
-
+    # ════════════════════════════════════════════════════════════════════
+    # ① 핵심 (DATA_MAPPING §1) — KPI 4 카드(진척바·목표마커) + 이상신호 3 카드
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("핵심 KPI · 목표 대비", "①")
+    # CAPA 이행률 / 변경 완료율 = safe_pct(weighted_completed, weighted_total)
+    capa_rate = safe_pct(weighted_metric_completed(fcapa), weighted_metric_total(fcapa))
+    change_rate = safe_pct(weighted_metric_completed(fchg), weighted_metric_total(fchg))
+    # 불만 평균처리일 = 접수일~처리완료일 평균
     avg_complaint_days = None
     if not fcmp.empty and "접수일" in fcmp.columns and "처리완료일" in fcmp.columns:
-        receipt = pd.to_datetime(fcmp["접수일"], errors="coerce")
-        complete = pd.to_datetime(fcmp["처리완료일"], errors="coerce")
-        delta = (complete - receipt).dt.days.dropna()
-        if not delta.empty:
-            avg_complaint_days = round(delta.mean(), 1)
+        _rcpt = pd.to_datetime(fcmp["접수일"], errors="coerce")
+        _cmpl = pd.to_datetime(fcmp["처리완료일"], errors="coerce")
+        _dd = (_cmpl - _rcpt).dt.days.dropna()
+        if not _dd.empty:
+            avg_complaint_days = round(_dd.mean(), 1)
+    # 기한초과(전사) = 전 프로젝트 weighted_metric_overdue 합
+    overdue_total = sum(weighted_metric_overdue(df_p) for df_p in F.values())
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        S.kpi_stat_card(capa_rate, KPI_TARGETS["CAPA 이행률"], "CAPA 이행률")
+    with k2:
+        S.kpi_stat_card(change_rate, KPI_TARGETS["변경 완료율"], "변경 완료율")
+    with k3:
+        _cval = avg_complaint_days if avg_complaint_days is not None else 0
+        S.kpi_stat_card(_cval, KPI_TARGETS["불만 평균처리일"], "불만 평균처리일", suffix="일", inverse=True)
+    with k4:
+        # 기한초과는 '낮을수록 좋음' → inverse, 목표 0(초과 없음). 진척바는 0 기준.
+        S.kpi_stat_card(round(overdue_total), 0, "기한초과(전사)", suffix="건", inverse=True, max_val=max(round(overdue_total), 1))
 
-    # KPI 1: Analyst error 감소율(막대) + 게이지 3개 (QMS_Dashboard.py 마감회의 탭과 동일 로직)
-    g1, g2, g3, g4 = st.columns(4)
-    with g1:
-        render_analyst_error_reduction_kpi(
-            foos, ALL_DFS.get("oos", pd.DataFrame()), primary_year, prev_year, year_col=YEAR_FILTER_COL
-        )
-    with g2:
-        # 진척 바 KPI 스탯 카드(반원 게이지 대체). 전년 델타는 이 지표들엔 미계산 → 생략.
-        S.kpi_stat_card(capa_rate, 90, "CAPA 이행률")
-    with g3:
-        S.kpi_stat_card(change_rate, 85, "변경 완료율")
-    with g4:
-        val = avg_complaint_days if avg_complaint_days is not None else 0
-        S.kpi_stat_card(val, 30, "불만 평균처리일", suffix="일", inverse=True)
-
-    st.divider()
-
-    # 프로젝트별 KPI 카드 (주요 8개) — 스파크라인 포함
-    S.section_header("프로젝트별 현황 요약", "📋")
-    main_projects = [
-        ("oos", foos), ("deviation", fdev), ("capa", fcapa), ("actionitem", fai),
-        ("changemanagement", fchg), ("complain", fcmp), ("extension", fext), ("investigation", finv),
-    ]
-    kpi_cols = st.columns(8)
-    for col_ui, (pk, df_p) in zip(kpi_cols, main_projects):
-        label = PROJECT_META[pk]["label"]
-        color = PROJECT_META[pk]["color"]
-        total = weighted_metric_total(df_p)
-        done = weighted_metric_completed(df_p)
-        rate = safe_pct(done, total)
-        overdue = weighted_metric_overdue(df_p)
-        # 월별 스파크라인 데이터
-        mc = _month_col_for_df(df_p)
-        spark = []
-        if not df_p.empty and mc in df_p.columns:
-            _s = _monthly_weighted_series(df_p, mc)
-            spark = [round(v) for v in _s["건수"].tolist()]
-        status = "bad" if overdue > 0 else ("good" if rate >= 80 else "warn")
-        delta_str = f"완료 {rate:.0f}%" if done else None
-        with col_ui:
-            S.metric_with_sparkline(
-                label=label,
-                value=f"{round(total)}건",
-                delta=delta_str,
-                spark_values=spark,
-                spark_color=color,
-                status=status,
-            )
+    # · 이상신호 3 카드: 종결순서 점검(2.5 요약) / 재발 / Analyst error
+    st.caption("전사 이상신호")
+    _sg1, _sg2, _sg3 = st.columns(3)
+    # 종결순서 점검 = 2.5 와 동일 수치(워크스페이스 합 = 전 DF 카운트)
+    _ov_pre = _ov_miss = 0
+    for _wsid in ("qc", "qa", "actions"):
+        _a, _b = _ws_closure_counts(_wsid, F)
+        _ov_pre += _a; _ov_miss += _b
+    with _sg1:
+        st.metric("🧭 종결순서 점검", f"{_ov_pre + _ov_miss}건",
+                  help=f"선종결 의심 {_ov_pre} · 종결처리 누락 {_ov_miss} (이상 케이스 플래그 2종 합)")
+        st.caption(f"선종결 {_ov_pre} · 누락 {_ov_miss}")
+        if st.button("점검하러 가기 →", key="sig_jump_closure", use_container_width=True):
+            st.session_state["_ws_jump_target"] = "QA 품질운영"
+            st.rerun()
+    # 재발 = 재발여부 비어있지 않음(기존 코드 로직, deviation+외주). DATA_MAPPING '예' 문구는
+    # 실데이터에 '예' 값이 없어, 코드 기존 정의(notna·non-empty)에 바인딩(보고서에 명시).
+    _recur_n = 0
+    for _rk in ("deviation", "deviationoutsourcing"):
+        _rdf = F.get(_rk)
+        if _rdf is not None and not _rdf.empty and "재발여부" in _rdf.columns:
+            _rb = _rdf.drop_duplicates(subset=["관리번호"]) if "관리번호" in _rdf.columns else _rdf
+            _recur_n += int((_rb["재발여부"].notna() & (_rb["재발여부"].astype(str).str.strip() != "") & (_rb["재발여부"].astype(str).str.strip() != "아니요")).sum())
+    _sg2.metric("↻ 재발", f"{_recur_n}건", help="일탈(자사+외주) 재발여부 표기 건수(빈값·'아니요' 제외)")
+    # Analyst error = 이상발생 원인=="Analyst error" 건수기여도(oos+dev)
+    _ae_df = pd.concat([d for d in (foos, fdev) if not d.empty], ignore_index=True) if any(not d.empty for d in (foos, fdev)) else pd.DataFrame()
+    _ae_n = 0
+    if not _ae_df.empty and "이상발생 원인" in _ae_df.columns:
+        _ae_hit = _ae_df[_ae_df["이상발생 원인"] == "Analyst error"]
+        _ae_n = round(_ae_hit["건수기여도"].sum()) if "건수기여도" in _ae_hit.columns else len(_ae_hit)
+    _sg3.metric("🔬 Analyst error", f"{_ae_n}건", help="이상발생 원인='Analyst error' 건수기여도 합(OOS+일탈)")
 
     st.divider()
 
-    # 월별 추이 (주요 5개 프로젝트 라인) + 트렌드 예측선
-    S.section_header("월별 발생 건수 추이", "📈")
-    _show_forecast = st.toggle("3개월 예측선 표시", value=False, key="kpi_forecast")
-    fig_trend = go.Figure()
-    for pk, df_p in [("oos", foos), ("deviation", fdev), ("capa", fcapa), ("changemanagement", fchg), ("complain", fcmp)]:
-        mc = _month_col_for_df(df_p)
-        if df_p.empty or mc not in df_p.columns:
-            continue
-        full = _monthly_weighted_series(df_p, mc)
-        ys = [round(v) for v in full["건수"].tolist()]
-        color = PROJECT_META[pk]["color"]
-        label = PROJECT_META[pk]["label"]
-        fig_trend.add_trace(go.Scatter(
-            x=MONTH_LABELS, y=ys, name=label,
-            mode="lines+markers", line=dict(color=color, width=2), marker=dict(size=5),
-        ))
-        if _show_forecast:
-            # 데이터 있는 월만 사용해 선형 회귀 예측
-            xs_fit = [i for i, v in enumerate(ys) if v > 0]
-            ys_fit = [ys[i] for i in xs_fit]
-            if len(xs_fit) >= 3:
-                try:
-                    coef = np.polyfit(xs_fit, ys_fit, 1)
-                    fc_x = list(range(12, 15))
-                    fc_y = [max(0, round(np.polyval(coef, x))) for x in fc_x]
-                    fc_labels = ["13월(예측)", "14월(예측)", "15월(예측)"]
-                    fig_trend.add_trace(go.Scatter(
-                        x=fc_labels, y=fc_y, name=f"{label} 예측",
-                        mode="lines+markers",
-                        line=dict(color=color, width=1.5, dash="dot"),
-                        marker=dict(size=4, symbol="diamond"),
-                        showlegend=False,
-                    ))
-                except Exception:
-                    pass
-    fig_trend.update_layout(
-        height=360, margin=dict(l=40, r=20, t=10, b=40),
-        plot_bgcolor=S.CHART_SURFACE,
-        legend=dict(orientation="h", y=1.08, x=0.5, xanchor="center"),
-    )
-    fig_trend.update_xaxes(showgrid=True, gridcolor="#f0f0f0")
-    fig_trend.update_yaxes(showgrid=True, gridcolor="#f0f0f0")
-    st.plotly_chart(fig_trend, use_container_width=True)
+    # ════════════════════════════════════════════════════════════════════
+    # ② 추세·분포 (DATA_MAPPING §1) — 월별 품질이상 추세(누적) + 이상발생 원인 도넛
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("추세 · 분포", "②")
+    t1, t2 = st.columns([2, 1])
+    with t1:
+        st.caption("월별 품질이상 추세 (OOS + 일탈, 건수기여도 누적)")
+        _mc_o = _month_col_for_df(foos)
+        _mc_d = _month_col_for_df(fdev)
+        _oos_m = [round(v) for v in _monthly_weighted_series(foos, _mc_o)["건수"].tolist()] if (not foos.empty and _mc_o in foos.columns) else [0] * 12
+        _dev_m = [round(v) for v in _monthly_weighted_series(fdev, _mc_d)["건수"].tolist()] if (not fdev.empty and _mc_d in fdev.columns) else [0] * 12
+        fig_tr = go.Figure()
+        fig_tr.add_trace(go.Bar(x=MONTH_LABELS, y=_oos_m, name="OOS", marker_color=CHART_COLORS["blue"]))
+        fig_tr.add_trace(go.Bar(x=MONTH_LABELS, y=_dev_m, name="일탈", marker_color=CHART_COLORS["teal"]))
+        fig_tr.update_layout(barmode="stack", height=320, margin=dict(l=40, r=20, t=10, b=40),
+                             plot_bgcolor=S.CHART_SURFACE, legend=dict(orientation="h", y=1.1, x=0.5, xanchor="center"))
+        st.plotly_chart(fig_tr, use_container_width=True)
+    with t2:
+        st.caption("이상발생 원인 분포 (OOS + 일탈)")
+        if not _ae_df.empty and "이상발생 원인" in _ae_df.columns:
+            _cause = _wgroupby(_ae_df[_ae_df["이상발생 원인"].fillna("").str.strip() != ""], "이상발생 원인", name="건수")
+            if not _cause.empty:
+                fig_dn = px.pie(_cause, values="건수", names="이상발생 원인", hole=0.5,
+                                color_discrete_sequence=CHART_SEQUENCE)
+                fig_dn.update_layout(height=320, margin=dict(l=0, r=0, t=10, b=10),
+                                     legend=dict(orientation="h", y=-0.1))
+                st.plotly_chart(fig_dn, use_container_width=True)
+            else:
+                S.empty_state("이상발생 원인 데이터가 없습니다.")
+        else:
+            S.empty_state("이상발생 원인 데이터가 없습니다.")
 
     st.divider()
 
-    # 하단 2단: 기한초과 + 신규 프로젝트 분포
-    ov1, ov2 = st.columns(2)
-    with ov1:
-        S.section_header("🚨 기한 초과 항목 (전 프로젝트)")
-        overdue_frames = []
+    # ════════════════════════════════════════════════════════════════════
+    # ③ 상세·점검 (DATA_MAPPING §1) — 기한 위험 테이블(🔗) + 종결순서 점검 요약
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("상세 · 점검", "③")
+    d1, d2 = st.columns([3, 2])
+    with d1:
+        st.caption("🚨 기한 위험 — 즉시 조치 (전 프로젝트 D-day 오름차순)")
+        _ov_frames = []
         for pk, df_p in F.items():
             if df_p.empty or "D-day" not in df_p.columns:
                 continue
-            dday_num = _num_series(df_p["D-day"], default=0.0)
-            over = df_p[dday_num < 0].copy()
-            if not over.empty:
-                over["프로젝트"] = PROJECT_META[pk]["label"]
-                overdue_frames.append(over)
-        if overdue_frames:
-            overdue_all = pd.concat(overdue_frames, ignore_index=True)
-            disp = ["프로젝트"] + [c for c in ["관리번호", "제목", "기한일", "D-day"] if c in overdue_all.columns]
-            st.dataframe(overdue_all[disp].sort_values("D-day").head(20),
-                         use_container_width=True, hide_index=True, height=320,
+            _dn = _num_series(df_p["D-day"], default=0.0)
+            _over = df_p[_dn < 0].copy()
+            if not _over.empty:
+                _over["프로젝트"] = PROJECT_META[pk]["label"]
+                _ov_frames.append(_over)
+        if _ov_frames:
+            _oa = pd.concat(_ov_frames, ignore_index=True)
+            _team_col = "작성팀" if "작성팀" in _oa.columns else None
+            _cols = ["프로젝트"] + [c for c in ["관리번호", "제목", _team_col, "기한일", "D-day", "진행상태"] if c and c in _oa.columns]
+            _top = _oa.sort_values("D-day").head(20)
+            st.dataframe(_top[_cols], use_container_width=True, hide_index=True, height=300,
                          column_config={"D-day": st.column_config.NumberColumn("D-day", format="%d일")})
+            # 행 드릴다운: 관리번호 선택 → 2.4 드로어
+            _prnos = _top["관리번호"].astype(str).tolist() if "관리번호" in _top.columns else []
+            if _prnos:
+                _cs, _cb = st.columns([3, 1])
+                with _cs:
+                    _sel = st.selectbox("관리번호", _prnos, key="ov_overdue_sel", label_visibility="collapsed")
+                with _cb:
+                    if st.button("🔗 연계 보기", key="ov_overdue_btn", use_container_width=True):
+                        show_linkage_drawer(_sel)
         else:
             st.success("기한 초과 항목이 없습니다.")
-
-    with ov2:
-        S.section_header("프로젝트별 진행/완료 비율", "📊")
-        status_rows = []
-        for pk, df_p in F.items():
-            if df_p.empty:
-                continue
-            tw = weighted_metric_total(df_p)
-            dw = weighted_metric_completed(df_p)
-            if tw > 0:
-                status_rows.append({
-                    "프로젝트": PROJECT_META[pk]["label"],
-                    "진행중": round(tw - dw, 2),
-                    "완료": round(dw, 2),
-                })
-        if status_rows:
-            sdf = pd.DataFrame(status_rows).sort_values("진행중", ascending=True)
-            fig_s = go.Figure()
-            fig_s.add_trace(go.Bar(name="진행중", x=sdf["진행중"], y=sdf["프로젝트"], orientation="h",
-                                    marker_color=CHART_COLORS["orange"], text=sdf["진행중"], textposition="inside"))
-            fig_s.add_trace(go.Bar(name="완료", x=sdf["완료"], y=sdf["프로젝트"], orientation="h",
-                                    marker_color=CHART_COLORS["green"], text=sdf["완료"], textposition="inside"))
-            fig_s.update_layout(barmode="stack", height=360, margin=dict(l=0, r=20, t=10, b=10),
-                                 legend=dict(orientation="h", y=1.05), plot_bgcolor=S.CHART_SURFACE)
-            st.plotly_chart(fig_s, use_container_width=True)
+    with d2:
+        st.caption("🧭 종결순서 점검 — 전사 요약")
+        st.metric("선종결 의심", f"{_ov_pre}건", help=_LINKAGE_FLAG_HELP[_FLAG_PRE])
+        st.metric("종결처리 누락", f"{_ov_miss}건", help=_LINKAGE_FLAG_HELP[_FLAG_MISS])
+        st.caption("상세는 각 워크스페이스 하단 '종결순서 점검' 패널에서 (소유 레코드 기준).")
 
     st.divider()
 
-    # YoY 비교 파넬 (전년 대비)
-    S.section_header("전년 대비 주요 지표 (YoY)", "📅")
-    _yoy_projects = [("oos", foos), ("deviation", fdev), ("capa", fcapa), ("complain", fcmp)]
-    _yoy_rows = []
-    for pk, df_p in _yoy_projects:
-        if df_p.empty:
-            continue
-        ycol_yoy = YEAR_FILTER_COL if YEAR_FILTER_COL in df_p.columns else "연도"
-        if ycol_yoy not in df_p.columns:
-            continue
-        py = selected_years[0] if selected_years else current_year
-        prev_y = py - 1
-        curr_cnt = _wcount(df_p[df_p[ycol_yoy] == py]) if py else 0
-        prev_cnt = _wcount(df_p[df_p[ycol_yoy] == prev_y]) if prev_y else 0
-        _yoy_rows.append({
-            "프로젝트": PROJECT_META[pk]["label"],
-            f"{prev_y}년": prev_cnt,
-            f"{py}년": curr_cnt,
-            "증감": curr_cnt - prev_cnt,
-            "증감률": f"{(curr_cnt - prev_cnt) / prev_cnt * 100:+.1f}%" if prev_cnt > 0 else "-",
-        })
-    if _yoy_rows:
-        _yoy_df = pd.DataFrame(_yoy_rows)
-        _yoy_curr = selected_years[0] if selected_years else current_year
-        _yoy_prev = _yoy_curr - 1
-        prev_col = f"{_yoy_prev}년"
-        curr_col = f"{_yoy_curr}년"
-        fig_yoy = go.Figure()
-        fig_yoy.add_trace(go.Bar(
-            name=prev_col, x=_yoy_df["프로젝트"], y=_yoy_df[prev_col],
-            marker_color=CHART_COLORS["gray"], text=_yoy_df[prev_col], textposition="outside",
-        ))
-        fig_yoy.add_trace(go.Bar(
-            name=curr_col, x=_yoy_df["프로젝트"], y=_yoy_df[curr_col],
-            marker_color=CHART_COLORS["blue"], text=_yoy_df[curr_col], textposition="outside",
-        ))
-        fig_yoy.update_layout(
-            barmode="group", height=300,
-            margin=dict(l=10, r=10, t=20, b=10),
-            plot_bgcolor=S.CHART_SURFACE,
-            legend=dict(orientation="h", y=1.08),
-        )
-        st.plotly_chart(fig_yoy, use_container_width=True)
-        _yoy_disp = [c for c in _yoy_df.columns if c != "증감"]
-        st.dataframe(_yoy_df[_yoy_disp], use_container_width=True, hide_index=True)
+    # · 수집 상태 — 16개 프로젝트 건수 그리드 (관리번호.nunique)
+    S.section_header("수집 상태 (16개 프로젝트)", "▦")
+    _grid_cols = st.columns(8)
+    _gi = 0
+    for pk, df_p in ALL_DFS.items():
+        if pk == "deviationoutsourcing":
+            continue  # 일탈에 통합 표기
+        _n = df_p["관리번호"].nunique() if not df_p.empty and "관리번호" in df_p.columns else len(df_p)
+        with _grid_cols[_gi % 8]:
+            st.metric(PROJECT_META[pk]["label"], f"{_n}건")
+        _gi += 1
 
     S.render_footer()
 
@@ -1957,7 +2133,7 @@ _mc_oos = _month_col_for_df(foos)
 # 탭 2: OOS
 # ============================================================================
 
-with tab_oos:
+if _render_tab("oos"):
     S.render_header("OOS (Out of Specification)")
     st.markdown("---")
     primary_year = _primary_year
@@ -1985,8 +2161,8 @@ with tab_oos:
             foos, oos_ny, primary_year, prev_year, ycol, mc_oos, CHART_COLORS, safe_pct, COMPLETED_KEYWORDS,
         )
     with o_tab_link:
-        render_linkage_section("oos", key_suffix="oos",
-                                title="OOS → 조사 → CAPA → AI 체인 연계 현황")
+        _linkage_drawer_entry(F.get("oos", pd.DataFrame()), key_suffix="oos",
+                              title="OOS 연계 드릴다운 (OOS → 조사 → CAPA → AI)")
     with o_tab_raw:
         render_raw_data_section(
             default_project_keys=["oos"],
@@ -2006,7 +2182,7 @@ with tab_oos:
 # 탭 3: 일탈 (자사 · 외주)
 # ============================================================================
 
-with tab_dev:
+if _render_tab("dev"):
     render_event_category_tab(
         kind="일탈",
         key_prefix="dev",
@@ -2020,7 +2196,7 @@ with tab_dev:
 # 탭 3-2: 인시던트 (자사 · 외주)
 # ============================================================================
 
-with tab_incident:
+if _render_tab("incident"):
     render_event_category_tab(
         kind="인시던트",
         key_prefix="inc",
@@ -2034,7 +2210,7 @@ with tab_incident:
 # 탭 4: 조사
 # ============================================================================
 
-with tab_inv:
+if _render_tab("inv"):
     S.render_header("조사 (Investigation)")
     st.markdown("---")
 
@@ -2129,8 +2305,8 @@ with tab_inv:
                 st.info("작성팀 컬럼 없음")
 
     with i_link:
-        render_linkage_section("investigation", key_suffix="inv",
-                                title="조사 체인 연계 현황 (OOS/일탈 → 조사 → CAPA → AI)")
+        _linkage_drawer_entry(F.get("investigation", pd.DataFrame()), key_suffix="inv",
+                              title="조사 연계 드릴다운 (OOS/일탈 → 조사 → CAPA → AI)")
 
     with i_tab_raw:
         render_raw_data_section(
@@ -2149,7 +2325,7 @@ with tab_inv:
 # 탭 3: CAPA 관리
 # ============================================================================
 
-with tab_capa:
+if _render_tab("capa"):
     S.render_header("CAPA & Action Item 관리")
     st.markdown("---")
 
@@ -2218,18 +2394,10 @@ with tab_capa:
                     delta=f"{safe_pct(cai_d + ai_d, cai_t + ai_t):.0f}%")
 
         st.divider()
-        S.section_header("모니터링AI 이행률 게이지")
+        # [Task 2.6] 반원 게이지 제거 → 진척 바 KPI 스탯 카드(토큰 일관). 게이지 잔존 0.
+        S.section_header("모니터링AI 이행률")
         ai_rate = safe_pct(ai_d, ai_t)
-        fig_g = go.Figure(go.Indicator(mode="gauge+number", value=ai_rate,
-            number={"suffix": "%", "font": {"size": 36}},
-            gauge={"axis": {"range": [0, 100]},
-                    "bar": {"color": CHART_COLORS["blue"]},
-                    "steps": [{"range": [0, 50], "color": "#ffebee"},
-                              {"range": [50, 80], "color": "#fff3e0"},
-                              {"range": [80, 100], "color": "#e8f5e9"}],
-                    "threshold": {"line": {"color": CHART_COLORS["red"], "width": 3}, "value": 80}}))
-        fig_g.update_layout(height=260, margin=dict(l=20, r=20, t=30, b=10))
-        st.plotly_chart(fig_g, use_container_width=True)
+        S.kpi_stat_card(round(ai_rate, 1), 80, "모니터링AI 이행률")
 
     with capa_deadline:
         S.section_header("기한 초과·지연 현황")
@@ -2252,8 +2420,8 @@ with tab_capa:
             st.success("기한 초과 항목이 없습니다.")
 
     with capa_link:
-        render_linkage_section("capa", key_suffix="capa",
-                                title="CAPA 체인 연계 현황 (OOS/일탈 → 조사 → CAPA → AI)")
+        _linkage_drawer_entry(F.get("capa", pd.DataFrame()), key_suffix="capa",
+                              title="CAPA 연계 드릴다운 (OOS/일탈 → 조사 → CAPA → AI)")
 
     with capa_tab_raw:
         render_raw_data_section(
@@ -2272,7 +2440,7 @@ with tab_capa:
 # 탭 4: 변경관리
 # ============================================================================
 
-with tab_change:
+if _render_tab("change"):
     S.render_header("변경관리 통합 현황")
     st.markdown("---")
 
@@ -2389,8 +2557,8 @@ with tab_change:
                 st.plotly_chart(fig_st, use_container_width=True)
 
     with chg_link:
-        render_linkage_section("changemanagement", key_suffix="chg",
-                                title="변경관리 체인 연계 현황")
+        _linkage_drawer_entry(F.get("changemanagement", pd.DataFrame()), key_suffix="chg",
+                              title="변경관리 연계 드릴다운")
 
     with chg_tab_raw:
         render_raw_data_section(
@@ -2412,7 +2580,7 @@ with tab_change:
 # 탭 5: 고객불만
 # ============================================================================
 
-with tab_complain:
+if _render_tab("complain"):
     S.render_header("고객불만 현황")
     st.markdown("---")
 
@@ -2622,8 +2790,8 @@ with tab_complain:
             st.info("접수일·처리완료일 컬럼이 필요합니다.")
 
     with cmp_link:
-        render_linkage_section("complain", key_suffix="cmp",
-                                title="고객불만 체인 연계 현황")
+        _linkage_drawer_entry(F.get("complain", pd.DataFrame()), key_suffix="cmp",
+                              title="고객불만 연계 드릴다운")
 
     with cmp_tab_raw:
         render_raw_data_section(
@@ -2642,7 +2810,7 @@ with tab_complain:
 # 탭 6: 워크플로우 연계
 # ============================================================================
 
-with tab_workflow:
+if _render_tab("workflow"):
     S.render_header("워크플로우 연계 분석")
     st.markdown("---")
     st.markdown("OOS/일탈 발생 시 후속 워크플로우(조사, CAPA, Action Item)로 어떻게 연결되는지 분석합니다.")
@@ -2775,7 +2943,7 @@ with tab_workflow:
 # 탭 7: 기한관리
 # ============================================================================
 
-with tab_deadline:
+if _render_tab("deadline"):
     S.render_header("기한 & 일정 관리")
     st.markdown("---")
 
@@ -2889,7 +3057,7 @@ with tab_deadline:
 # 탭 9: 설정
 # ============================================================================
 
-with tab_settings:
+if _render_tab("settings"):
     S.render_header("시스템 설정 & 관리")
     st.markdown("---")
 
@@ -3086,4 +3254,43 @@ Streamlit        : {st.__version__}
             except Exception as _e:
                 st.error(f"PDF 오류: {_e}")
 
+    S.render_footer()
+
+
+# ============================================================================
+# 종결순서 점검 패널 (Task 2.5) — 워크스페이스별 1회, 소유 레코드 기준.
+# _active_ws 로 게이트(현재 워크스페이스가 qc/qa/actions 일 때만 그 소유 점검을 하단에 표시).
+# 어느 sub-view 에 있든 워크스페이스 하단에 일관 노출 → '분산' 요건 충족.
+# ============================================================================
+if _active_ws in _WS_OWNED_PROJECTS:
+    st.markdown("---")
+    render_closure_check(_active_ws, F, key_suffix=f"ws_{_active_ws}")
+
+
+# ============================================================================
+# 신설 워크스페이스 자리 확보 (Task 2.1) — 내용은 Phase 3에서 구현
+#  · 제품·배치품질: APQR(품목×연도) + 출하 전 확인(lot) — Task 3.3
+#  · 알림·모니터링: 룰 기반 알림 센터 — Task 3.4 (현 설정탭 알림설정이 모태)
+# 레일에는 지금 노출하되, 본문은 "준비 중 + 예정 내용" 안내로 자리만 잡는다.
+# ============================================================================
+if _render_tab("product_new"):
+    S.render_header("제품·배치 품질", "APQR · 출하 전 확인 (Phase 3 신설 예정)")
+    st.markdown("---")
+    st.info(
+        "이 워크스페이스는 **Phase 3 (Task 3.3)** 에서 구현됩니다.\n\n"
+        "- **APQR(연간품질평가)**: 품목 × 연도별 OOS/일탈/조사/CAPA·재발·원인 집계\n"
+        "- **출하 전 확인(lot)**: 제조번호 입력 → 직접보유+체인 자식 수집 → 종결 시 ✅PASS / 미종결 ⛔HOLD\n\n"
+        "※ 모니터링 보조이며 정식 출하 판정 시스템이 아닙니다."
+    )
+    S.render_footer()
+
+if _render_tab("alerts_new"):
+    S.render_header("알림·모니터링", "룰 기반 알림 센터 (Phase 3 신설 예정)")
+    st.markdown("---")
+    st.info(
+        "이 워크스페이스는 **Phase 3 (Task 3.4)** 에서 구현됩니다.\n\n"
+        "- 기한초과 · D-3 임박 · 재발 · 미종결 누적 **룰 관리**\n"
+        "- 워크스페이스/스코프별 구독 + Slack · 이메일 채널(기존 `alert_service` 활용)\n\n"
+        "현재 알림 설정은 **데이터·설정 → 알림 설정** 탭에 있습니다."
+    )
     S.render_footer()
