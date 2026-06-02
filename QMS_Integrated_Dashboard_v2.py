@@ -52,6 +52,10 @@ from qms_pro.services.fetcher_service import (
 
 from qms_pro.services.qms_client import API_BASE_URL
 from qms_pro.services import data_access as DA  # 데이터 읽기 단일 진입 계층(Task 1.1)
+from qms_pro.domain.attribution import (  # 품목/lot 체인 귀속 파생(Task 3.2b, 배선 3.3a)
+    attribute_dataframes as _attribute_dataframes,
+    DERIVED_COLS as _ATTR_DERIVED_COLS,
+)
 
 # ============================================================================
 # 런타임 예외 노이즈 억제 (탭 닫기·새로고침 시 Tornado WebSocket 잡음)
@@ -583,8 +587,33 @@ try:
     _linkage_ctx = DA.build_ctx(ALL_DFS)
     st.session_state["qms_linkage_ctx"] = _linkage_ctx
 except Exception as _linkage_err:
+    _linkage_ctx = None
     st.session_state["qms_linkage_ctx"] = None
     st.sidebar.warning(f"연계 인덱스 빌드 실패: {_linkage_err}")
+
+# ─── 품목/lot 체인 귀속(전파) 파생 컬럼 부여 — 단일 지점 배선(Task 3.3a) ───
+# attribution.attribute_dataframes 는 읽기전용·멱등(원본 컬럼 불변, 신규 4컬럼만 추가).
+# 위 build_ctx(_linkage_ctx)를 재사용해 중복 계산 회피. 데이터 시그니처 기준 1회만 계산
+# (세션 메모 — 추가 캐시 계층 신설 없음). 실패해도 원본으로 graceful 렌더.
+def _attributed_all_dfs(all_dfs: dict, ctx) -> dict:
+    try:
+        _sig = (str(DA.get_refresh_meta().get("last_refresh")),
+                tuple(len(d) for d in all_dfs.values()))
+    except Exception:
+        _sig = None
+    _memo = st.session_state.get("_qms_attr_memo")
+    if _sig is not None and _memo is not None and _memo.get("sig") == _sig:
+        return _memo["dfs"]
+    try:
+        _out = _attribute_dataframes(all_dfs, ctx=ctx)
+    except Exception as _attr_err:  # noqa: BLE001
+        st.sidebar.warning(f"품목 귀속 계산 실패(원본으로 표시): {_attr_err}")
+        return all_dfs
+    st.session_state["_qms_attr_memo"] = {"sig": _sig, "dfs": _out}
+    return _out
+
+
+ALL_DFS = _attributed_all_dfs(ALL_DFS, _linkage_ctx)
 
 # ============================================================================
 # 글로벌 필터바 (Task 2.3) — 상단 고정 바로 이전 (사이드바 → 메인 상단)
@@ -879,7 +908,9 @@ def render_raw_data_section(
                 if _ec and _ec not in priority:
                     priority.append(_ec)
         avail = [c for c in priority if c in raw_all.columns]
-        all_other = [c for c in raw_all.columns if c not in priority and c not in ["연도", "월", "완료여부"]]
+        # [Task 3.3a] 품목/lot 귀속 파생 4컬럼은 제품·배치품질 전용 — 원본 데이터 표에는 노출 안 함(기존 표시 보존).
+        _hide_cols = ["연도", "월", "완료여부"] + list(_ATTR_DERIVED_COLS)
+        all_other = [c for c in raw_all.columns if c not in priority and c not in _hide_cols]
         parser_cols = [c for c in all_other if not c.startswith("_ext_")]
         ext_cols = [c for c in all_other if c.startswith("_ext_")]
         if include_raw:
