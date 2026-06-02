@@ -996,6 +996,102 @@ _LINKAGE_FLAG_HELP = {
 }
 
 
+@st.dialog("🔗 연계 드릴다운", width="large")
+def show_linkage_drawer(prno: str):
+    """[Task 2.4] 레코드별 부모-자식 체인 드릴다운 드로어(st.dialog 모달).
+
+    시각: docs/prototype.html drawer. 로직: domain.linkage(summarize_*/resolve_chain)
+    + 세션 ctx(build_ctx) 재사용(rebind, 재작성 금지). 전 워크스페이스에서 동일 호출.
+    표시: 부모 체인 → 본 레코드 → 자식 체인 흐름 + 최종 종결 여부(체인) + 지연일.
+    """
+    from qms_pro.domain.linkage import summarize_children, summarize_parent, resolve_chain
+    ctx = st.session_state.get("qms_linkage_ctx")
+    if ctx is None:
+        st.warning("연계 인덱스가 없습니다. 상단의 '백그라운드 갱신' 후 새로고침하세요.")
+        return
+    key = str(prno).strip()
+    row = ctx.by_prno.get(key)
+    if not row:
+        st.info(f"관리번호 **{key}** 의 연계 정보를 찾지 못했습니다.")
+        return
+
+    sc = summarize_children(ctx, key)
+    sp = summarize_parent(ctx, key)
+    chain_closed = bool(sc.get("최종 종결 여부(체인)"))
+    open_n = int(sc.get("자식 미종결 수") or 0)
+    delay = sc.get("자식 최대 지연일")
+
+    # ── 헤더: 본 레코드 + 종결 판정 ──
+    _proj = str(row.get("프로젝트", "") or "?")
+    _title = str(row.get("제목", "") or "")
+    st.markdown(f"**{_proj}** · `{key}`" + (f" — {_title}" if _title else ""))
+    cc1, cc2, cc3 = st.columns(3)
+    cc1.metric("최종 종결(체인)", "✅ 종결" if chain_closed else "⛔ 미종결")
+    cc2.metric("미종결 자식", f"{open_n}건")
+    cc3.metric("최대 지연일", f"{int(delay)}일" if delay not in (None, "") else "—")
+
+    # ── 부모(조상) 체인 ──
+    st.markdown("---")
+    st.markdown("**상위(부모·조상) 체인**")
+    parent_prno = str(sp.get("부모 관리번호", "") or "")
+    if parent_prno:
+        top = str(sp.get("최상위 조상 관리번호", "") or "")
+        depth = sp.get("체인 내 위치(깊이)", 1)
+        st.caption(
+            f"최상위 `{top}` ({sp.get('최상위 조상 프로젝트','')}) "
+            f"→ … → 부모 `{parent_prno}` ({sp.get('부모 프로젝트','')}) → **본 레코드** (깊이 {depth})"
+        )
+    else:
+        st.caption("부모 없음 — 이 레코드가 체인 루트입니다.")
+
+    # ── 자식(후손) 체인 ──
+    st.markdown("**하위(자식·후손) 체인**")
+    st.caption(f"자식 구성: {sc.get('자식 구성') or '없음'} · 전체 자식 {int(sc.get('자식 수(전체)') or 0)}건")
+    desc = resolve_chain(ctx, key, "descendants")
+    if desc:
+        rows = []
+        for n in desc:
+            npr = str(n.get("관리번호", "") or "")
+            closed = npr in ctx.closure_set
+            rows.append({
+                "관리번호": npr,
+                "프로젝트": n.get("프로젝트", ""),
+                "제목": (str(n.get("제목", "") or ""))[:40],
+                "종결": "✅" if closed else "⛔",
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.caption("연결된 자식 워크플로우가 없습니다.")
+
+    # 미종결 목록(있으면)
+    open_list = sc.get("자식 미종결 목록") or []
+    if open_list:
+        st.markdown(f"**미종결 자식 {len(open_list)}건**: " + ", ".join(f"`{p}`" for p in open_list[:20]))
+
+
+def _linkage_drawer_entry(df: pd.DataFrame, key_suffix: str, title: str | None = None):
+    """[Task 2.4] '연계 현황' sub-tab 을 대체하는 드로어 진입 UI.
+
+    상세 표의 관리번호를 선택 → '🔗 연계 보기' 버튼 → show_linkage_drawer 모달.
+    (기존 render_linkage_section 의 섹션형 패널 대신, 레코드별 드릴다운으로 대체.)
+    """
+    if title:
+        S.section_header(title)
+    if df is None or df.empty or "관리번호" not in df.columns:
+        st.info("연계를 조회할 데이터가 없습니다.")
+        return
+    prnos = (
+        df.drop_duplicates(subset=["관리번호"])["관리번호"].astype(str).tolist()
+    )
+    st.caption("관리번호를 선택하면 부모-자식 체인과 최종 종결 여부(체인)·지연일을 모달로 봅니다.")
+    c_sel, c_btn = st.columns([3, 1])
+    with c_sel:
+        sel = st.selectbox("관리번호", prnos, key=f"linkdrawer_sel_{key_suffix}", label_visibility="collapsed")
+    with c_btn:
+        if st.button("🔗 연계 보기", key=f"linkdrawer_btn_{key_suffix}", use_container_width=True):
+            show_linkage_drawer(sel)
+
+
 def render_linkage_section(project_key: str, key_suffix: str, title: str | None = None,
                             df_override: pd.DataFrame | None = None):
     """프로젝트 DataFrame 에 머지된 linkage 컬럼을 기반으로 체인 요약 패널을 렌더.
@@ -1659,9 +1755,8 @@ def render_event_category_tab(
             st.info("연계 분석 컨텍스트가 없습니다.")
         else:
             # 해당 kind 행들의 관리번호만으로 서브셋 만들어 render_linkage_section 내부 로직과 동일하게 출력
-            render_linkage_section("deviation", key_suffix=f"{key_prefix}_link",
-                                    title=f"{label} 체인 연계 현황",
-                                    df_override=ftab)
+            _linkage_drawer_entry(ftab, key_suffix=f"{key_prefix}_link",
+                                  title=f"{label} 연계 드릴다운")
 
     # ─── 원본 데이터 ───────────────────────────────────────────────────
     with tab_raw:
@@ -2038,8 +2133,8 @@ if _render_tab("oos"):
             foos, oos_ny, primary_year, prev_year, ycol, mc_oos, CHART_COLORS, safe_pct, COMPLETED_KEYWORDS,
         )
     with o_tab_link:
-        render_linkage_section("oos", key_suffix="oos",
-                                title="OOS → 조사 → CAPA → AI 체인 연계 현황")
+        _linkage_drawer_entry(F.get("oos", pd.DataFrame()), key_suffix="oos",
+                              title="OOS 연계 드릴다운 (OOS → 조사 → CAPA → AI)")
     with o_tab_raw:
         render_raw_data_section(
             default_project_keys=["oos"],
@@ -2182,8 +2277,8 @@ if _render_tab("inv"):
                 st.info("작성팀 컬럼 없음")
 
     with i_link:
-        render_linkage_section("investigation", key_suffix="inv",
-                                title="조사 체인 연계 현황 (OOS/일탈 → 조사 → CAPA → AI)")
+        _linkage_drawer_entry(F.get("investigation", pd.DataFrame()), key_suffix="inv",
+                              title="조사 연계 드릴다운 (OOS/일탈 → 조사 → CAPA → AI)")
 
     with i_tab_raw:
         render_raw_data_section(
@@ -2305,8 +2400,8 @@ if _render_tab("capa"):
             st.success("기한 초과 항목이 없습니다.")
 
     with capa_link:
-        render_linkage_section("capa", key_suffix="capa",
-                                title="CAPA 체인 연계 현황 (OOS/일탈 → 조사 → CAPA → AI)")
+        _linkage_drawer_entry(F.get("capa", pd.DataFrame()), key_suffix="capa",
+                              title="CAPA 연계 드릴다운 (OOS/일탈 → 조사 → CAPA → AI)")
 
     with capa_tab_raw:
         render_raw_data_section(
@@ -2442,8 +2537,8 @@ if _render_tab("change"):
                 st.plotly_chart(fig_st, use_container_width=True)
 
     with chg_link:
-        render_linkage_section("changemanagement", key_suffix="chg",
-                                title="변경관리 체인 연계 현황")
+        _linkage_drawer_entry(F.get("changemanagement", pd.DataFrame()), key_suffix="chg",
+                              title="변경관리 연계 드릴다운")
 
     with chg_tab_raw:
         render_raw_data_section(
@@ -2675,8 +2770,8 @@ if _render_tab("complain"):
             st.info("접수일·처리완료일 컬럼이 필요합니다.")
 
     with cmp_link:
-        render_linkage_section("complain", key_suffix="cmp",
-                                title="고객불만 체인 연계 현황")
+        _linkage_drawer_entry(F.get("complain", pd.DataFrame()), key_suffix="cmp",
+                              title="고객불만 연계 드릴다운")
 
     with cmp_tab_raw:
         render_raw_data_section(
