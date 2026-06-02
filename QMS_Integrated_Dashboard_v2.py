@@ -500,14 +500,7 @@ def _trigger_refresh_job_background() -> bool:
         return False
 
 
-# 수동 갱신: 동기 실행(블로킹) 금지. 백그라운드로 refresh_job 만 트리거하고 안내(Task 1.3).
-# 상시 운영의 정규 갱신은 스케줄러(Task 1.4)가 담당한다.
-if st.sidebar.button("↻ 백그라운드 갱신 시작", use_container_width=True, type="primary"):
-    if _trigger_refresh_job_background():
-        st.cache_data.clear()  # 다음 렌더에서 새 캐시를 읽도록 메모이즈만 비움(디스크 캐시는 유지)
-        st.sidebar.info("갱신 시작됨 — 수집 완료 후 새로고침하면 반영됩니다.")
-    else:
-        st.sidebar.warning("갱신 시작 실패 — 스케줄러(Task 1.4) 또는 수동 실행을 사용하세요.")
+# (수동 갱신 버튼은 Task 2.3 에서 상단 필터바로 이전됨 — 사이드바 중복 제거.)
 
 _load_progress = st.sidebar.progress(0)
 _load_caption = st.sidebar.empty()
@@ -592,8 +585,12 @@ except Exception as _linkage_err:
     st.session_state["qms_linkage_ctx"] = None
     st.sidebar.warning(f"연계 인덱스 빌드 실패: {_linkage_err}")
 
-# 필터 (사이드바 상단에 표시)
-st.sidebar.markdown("**필터**")
+# ============================================================================
+# 글로벌 필터바 (Task 2.3) — 상단 고정 바로 이전 (사이드바 → 메인 상단)
+# 시각: docs/prototype.html 상단바. 구성: ①수집상태 ②필터칩(연도기준·연도·진행상태·D-day)
+# ③검색 ④갱신·Excel. 역할(QC/QA) 없음. 필터 로직/변수는 불변 — 위치·표현만 이동.
+# 필터값은 세션 위젯 key 로 워크스페이스 전환에도 유지된다.
+# ============================================================================
 _all_year_dfs = [d for d in ALL_DFS.values() if not d.empty and ("연도" in d.columns or "연도_등록" in d.columns)]
 _year_set = set()
 for d in _all_year_dfs:
@@ -602,82 +599,72 @@ for d in _all_year_dfs:
             _year_set |= {int(y) for y in d[_ycol].dropna().unique()}
 years_available = sorted(_year_set, reverse=True) if _year_set else [datetime.now().year]
 current_year = datetime.now().year
-
-year_basis = st.sidebar.radio(
-    "연도 기준",
-    ("발견일시", "등록일"),
-    index=0,
-    horizontal=True,
-    help="QMS 웹 과제 목록은 기본 필터가 등록일(regDate)입니다. 시험 발견일과 등록일이 다른 건이 있으면 건수가 달라집니다.",
-)
-YEAR_FILTER_COL = "연도_등록" if year_basis == "등록일" else "연도"
-
 _default_years = (
     [2026]
     if 2026 in years_available
     else ([current_year] if current_year in years_available else (years_available[:1] if years_available else []))
 )
-selected_years = st.sidebar.multiselect("연도", years_available, default=_default_years)
-status_filter = st.sidebar.radio("진행상태", ["전체", "진행중", "완료"], horizontal=True)
-dday_filter = st.sidebar.radio("기한일 기준", ["전체", "D-day 임박 (7일)", "기한 초과"], horizontal=False)
 
-# 필터 초기화 버튼
-if S.filter_reset_button():
-    # 세션에서 필터 관련 키 리셋
-    for _k in list(st.session_state.keys()):
-        if _k.startswith("_") or _k in ("qms_linkage_ctx", "_cache_fetch_time"):
-            continue
-        del st.session_state[_k]
-    st.rerun()
-
-st.sidebar.divider()
-st.sidebar.markdown("**데이터 현황**")
-total_all = 0
-for pk, df_p in ALL_DFS.items():
-    label = PROJECT_META[pk]["label"]
-    if pk == "deviationoutsourcing":
-        st.sidebar.caption(f"📎 {label}: 「일탈」에 자사+외주 통합 수집")
-        continue
-    n = df_p["관리번호"].nunique() if not df_p.empty and "관리번호" in df_p.columns else len(df_p)
-    total_all += n
-    if df_p.empty:
-        st.sidebar.caption(f"⚪ {label}: 0건")
-    else:
-        st.sidebar.caption(f"🟢 {label}: {n}건")
-st.sidebar.success(f"총 {total_all}건")
-
-# ─── 갱신 신뢰성 표기 (Task 1.3) ───
-# refresh_job 이 기록한 _meta.json 기반으로 "마지막 갱신 시각 + 수집 상태 N/16"를 표기.
-# 실패 프로젝트가 있으면 경고 배지로 노출한다(어느 프로젝트가 옛 캐시인지 알 수 있게).
-# NOTE(Phase 2): 이 표기는 종합현황 "수집 상태 카드"로 이전 예정(현재는 11탭 구조라 사이드바).
+# 수집 상태(_meta.json) 문자열 — 상단바 ①
 _refresh_meta = DA.get_refresh_meta()
 if _refresh_meta.get("source") == "none":
-    # refresh_job 미실행(앱이 직접 채운 캐시만 존재) → 시각 미상. 안내만.
-    st.sidebar.caption("마지막 갱신: (refresh_job 미실행 — 스케줄 수집 전)")
+    _status_md = "🟡 **수집 상태**: refresh_job 미실행"
+    _failed = []
 else:
-    _last = _refresh_meta.get("last_refresh") or "(미상)"
     _ok = _refresh_meta.get("ok_count", 0)
     _tot = _refresh_meta.get("total_count", 0)
-    st.sidebar.caption(f"마지막 갱신: {_last}")
-    if _tot and _ok >= _tot:
-        st.sidebar.caption(f"수집 상태: ✅ {_ok}/{_tot}")
-    else:
-        st.sidebar.caption(f"수집 상태: ⚠️ {_ok}/{_tot}")
-        _failed = [p for p, v in (_refresh_meta.get("projects") or {}).items()
-                   if isinstance(v, dict) and v.get("status") != "ok"]
-        if _failed:
-            _shown = ", ".join(_failed[:6]) + (" 외" if len(_failed) > 6 else "")
-            st.sidebar.warning(f"수집 실패 {len(_failed)}건(옛 캐시 표시): {_shown}")
+    _last = _refresh_meta.get("last_refresh") or "(미상)"
+    _badge = "✅" if (_tot and _ok >= _tot) else "⚠️"
+    _status_md = f"{_badge} **{_ok}/{_tot}** · 갱신 {_last}"
+    _failed = [p for p, v in (_refresh_meta.get("projects") or {}).items()
+               if isinstance(v, dict) and v.get("status") != "ok"]
 
-st.sidebar.caption(
-    f"⏱️ 16스텝 로드 {_fetch_elapsed:.1f}s "
-    f"(캐시 히트 시 ≈0s)"
-)
-S.cache_age_bar(_fetch_elapsed, ttl=1800)
-with st.sidebar.expander("스텝별 소요", expanded=False):
-    _slow = sorted(_step_times, key=lambda x: -x[1])[:16]
-    for _lbl, _sec in _slow:
-        st.caption(f"• {_lbl}: {_sec:.2f}s")
+# 총 건수(상단 수집상태 보조) — 사이드바 16개 캡션 대체
+total_all = 0
+for pk, df_p in ALL_DFS.items():
+    if pk == "deviationoutsourcing":
+        continue
+    total_all += df_p["관리번호"].nunique() if not df_p.empty and "관리번호" in df_p.columns else len(df_p)
+
+# ─── 상단 고정 필터바 렌더 ───
+_topbar = st.container()
+with _topbar:
+    _c_status, _c_yb, _c_year, _c_status_f, _c_dday, _c_actions = st.columns([2.6, 1.5, 1.4, 1.6, 1.7, 1.4])
+    with _c_status:
+        st.caption("수집 상태")
+        st.markdown(_status_md)
+        st.caption(f"총 {total_all:,}건 · 로드 {_fetch_elapsed:.1f}s")
+    with _c_yb:
+        year_basis = st.radio(
+            "연도 기준", ("발견일시", "등록일"), index=0, horizontal=True, key="flt_year_basis",
+            help="QMS 과제 목록 기본은 등록일(regDate). 발견일과 다르면 건수가 달라집니다.",
+        )
+    with _c_year:
+        selected_years = st.multiselect("연도", years_available, default=_default_years, key="flt_years")
+    with _c_status_f:
+        status_filter = st.radio("진행상태", ["전체", "진행중", "완료"], horizontal=True, key="flt_status")
+    with _c_dday:
+        dday_filter = st.radio("기한", ["전체", "D-day 임박 (7일)", "기한 초과"], horizontal=False, key="flt_dday")
+    with _c_actions:
+        st.caption("작업")
+        if st.button("↻ 백그라운드 갱신", use_container_width=True, key="top_refresh"):
+            if _trigger_refresh_job_background():
+                st.cache_data.clear()
+                st.toast("갱신 시작됨 — 완료 후 새로고침 시 반영")
+            else:
+                st.toast("갱신 시작 실패", icon="⚠️")
+        if st.button("↺ 필터 초기화", use_container_width=True, key="top_filter_reset"):
+            for _k in list(st.session_state.keys()):
+                # 필터 위젯 key(flt_*)만 리셋. 레일/연계 ctx/캐시시각은 보존.
+                if _k.startswith("flt_"):
+                    del st.session_state[_k]
+            st.rerun()
+if _failed:
+    _shown = ", ".join(_failed[:6]) + (" 외" if len(_failed) > 6 else "")
+    _topbar.warning(f"수집 실패 {len(_failed)}건(옛 캐시로 표시 중): {_shown}")
+st.divider()
+
+YEAR_FILTER_COL = "연도_등록" if year_basis == "등록일" else "연도"
 
 
 def _month_col_for_df(df: pd.DataFrame) -> str:
