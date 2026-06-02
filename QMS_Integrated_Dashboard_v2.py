@@ -1985,7 +1985,7 @@ if _render_tab("exec"):
     prev_year = primary_year - 1
 
     # ════════════════════════════════════════════════════════════════════
-    # ① 핵심 (DATA_MAPPING §1) — KPI 4 카드(진척바·목표마커) + 이상신호 3 카드
+    # ① 핵심 (DATA_MAPPING §1) — KPI 4 카드(진척바·목표마커) + 이상신호 2 카드(재발 일시 비활성)
     # ════════════════════════════════════════════════════════════════════
     S.section_header("핵심 KPI · 목표 대비", "①")
     # CAPA 이행률 / 변경 완료율 = safe_pct(weighted_completed, weighted_total)
@@ -2013,9 +2013,12 @@ if _render_tab("exec"):
         # 기한초과는 '낮을수록 좋음' → inverse, 목표 0(초과 없음). 진척바는 0 기준.
         C.kpi_stat_card(round(overdue_total), 0, "기한초과(전사)", suffix="건", inverse=True, max_val=max(round(overdue_total), 1))
 
-    # · 이상신호 3 카드: 종결순서 점검(2.5 요약) / 재발 / Analyst error
+    # · 이상신호 카드: 종결순서 점검(2.5 요약) / Analyst error
+    #   [재발 일시 비활성] '재발' 라인 숨김 — 재발여부 = recurrence1('A.재발가능성' select 점수)이며
+    #   '예' 비교 무효(실데이터 '예' 0건)·값 2/6 라벨 미확인이라 현 집계 의미 불명(정직화, 추측 금지).
+    #   TODO: 재발 신호 도메인 재정의 대기 — 라이브 폼 'A.재발가능성' 값 2/6 라벨 확인 후 재정의.
     st.caption("전사 이상신호")
-    _sg1, _sg2, _sg3 = st.columns(3)
+    _sg1, _sg3 = st.columns(2)
     # 종결순서 점검 = 2.5 와 동일 수치(워크스페이스 합 = 전 DF 카운트)
     _ov_pre = _ov_miss = 0
     for _wsid in ("qc", "qa", "actions"):
@@ -2028,17 +2031,7 @@ if _render_tab("exec"):
         if st.button("점검하러 가기 →", key="sig_jump_closure", use_container_width=True):
             st.session_state["_ws_jump_target"] = "QA 품질운영"
             st.rerun()
-    # 재발 = 재발여부 비어있지 않음(기존 코드 로직, deviation+외주). DATA_MAPPING '예' 문구는
-    # 실데이터에 '예' 값이 없어, 코드 기존 정의(notna·non-empty)에 바인딩(보고서에 명시).
-    _recur_n = 0
-    for _rk in ("deviation", "deviationoutsourcing"):
-        _rdf = F.get(_rk)
-        if _rdf is not None and not _rdf.empty and "재발여부" in _rdf.columns:
-            _rb = _rdf.drop_duplicates(subset=["관리번호"]) if "관리번호" in _rdf.columns else _rdf
-            _recur_n += int((_rb["재발여부"].notna() & (_rb["재발여부"].astype(str).str.strip() != "") & (_rb["재발여부"].astype(str).str.strip() != "아니요")).sum())
-    with _sg2:
-        C.signal_card("↻ 재발", f"{_recur_n}건", tone="warn", icon="",
-                      sub="일탈(자사+외주) 재발여부 표기 건수 · 빈값·'아니요' 제외")
+    # [재발 카드 일시 비활성 — 위 TODO 참조. 재발 집계/표시 모두 보류, 추측 집계 미작성.]
     # Analyst error = 이상발생 원인=="Analyst error" 건수기여도(oos+dev)
     _ae_df = pd.concat([d for d in (foos, fdev) if not d.empty], ignore_index=True) if any(not d.empty for d in (foos, fdev)) else pd.DataFrame()
     _ae_n = 0
