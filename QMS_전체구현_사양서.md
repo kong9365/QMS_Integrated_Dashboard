@@ -17,6 +17,29 @@
 
 ---
 
+## 0.5 정본(Source of Truth) — 핸드오프 ingest (2026-06-02 확정)
+
+- **토큰·레이아웃 정본** = `docs/HANDOFF.md`
+- **데이터 바인딩 정본** = `docs/DATA_MAPPING.md` (Phase 2/3 모든 화면 요소 ↔ 컬럼/계산식은 이 문서 기준)
+- **시각 렌더 정본** = `docs/prototype.html` (구 standalone 단일 파일을 공백·괄호 없는 표준 경로로 정리·대체. 2.1 에서 참조한 옛 IA 맵 프로토타입은 폐기). **22MB(폰트 인라인)라 `.gitignore` 처리 — 로컬 정본, git 미추적**(공개 레포 비대화 방지).
+
+### 정합성 대조 결과 (코드/CONTENT_MAP vs 핸드오프) — **구조 충돌 없음**
+| 항목 | 핸드오프 | 코드/CONTENT_MAP | 일치 |
+|---|---|---|---|
+| 7 워크스페이스 | overview/qc/qa/actions/product/alerts/data | `_WORKSPACES` 동일 7종 | ✅ |
+| 역할 필터(QC/QA) | 없음(제거 확정) | 토글 0, dim/차단 로직 0 | ✅ |
+| 연계 드릴다운 | 별도 탭 폐지 → 드로어 내장 | `show_linkage_drawer`(st.dialog) + 6 sub-tab 대체 | ✅ |
+| 디자인 토큰(Navy 6+의미 6) | HANDOFF hex | `qms_styles` 8토큰 hex 정확 일치 | ✅ |
+| 타이포 | Pretendard + mono(tnum) | `FONT_BODY`/`FONT_MONO` + `.qms-num` | ✅ |
+| 건수기여도 가중 | 모든 건수=건수기여도 합 round | `weighted_metric_*` 사용(단순 len 금지) | ✅ |
+| 백엔드 불변 | services/domain/linkage 계산로직 변경금지 | fetcher/metrics/linkage/fetch_uncached/alert/client **무변경** (data_access 는 신규 읽기계층, cache_service 는 cache_dir 접근자만 — 운영인프라) | ✅ |
+
+### 외형 근사 결정 (Streamlit 한계 — 의식적 근사로 확정)
+1. **레일**: 핸드오프 76px **아이콘 전용** 레일 → Streamlit 에선 `streamlit-option-menu` 기반 **'아이콘 + 짧은 라벨' 컴팩트 레일**로 근사(현행 유지). 픽셀 동일 아님, 기능·순서·의미 동일.
+2. **드로어**: 핸드오프 우측 480px **슬라이드인** 드로어 → Streamlit 네이티브 한계로 `st.dialog` **가운데 모달**로 근사(현행 유지). 트랜지션/위치 다름, 내용(체인 종결·흐름·자식 목록) 동일.
+
+---
+
 ## 1. 현재 레포 구조 (사실 — 작업 전 직접 재확인 필수)
 
 작업 시작 전 `find . -name "*.py" -not -path "./.git/*"` 로 실제 구조를 한 번 확인하라. 아래는 분석 시점 기준이다.

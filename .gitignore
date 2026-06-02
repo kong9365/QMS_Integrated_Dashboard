@@ -30,6 +30,9 @@ backups/
 *.zip
 *.png
 figures/
+# 시각 정본 프로토타입(22MB 폰트 인라인) — 로컬 정본, 미추적(공개 레포 비대화 방지)
+docs/prototype.html
+_shots/
 
 # ===== 에디터 / OS =====
 .vscode/
