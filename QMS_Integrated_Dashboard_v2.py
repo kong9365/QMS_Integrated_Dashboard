@@ -1957,245 +1957,161 @@ def _render_tab(tabkey: str) -> bool:
 # ============================================================================
 
 if _render_tab("exec"):
-    S.render_header("경영진 품질 대시보드", f"MFDS GMP 점검 대비 KPI | {datetime.now().strftime('%Y-%m-%d')}")
-    st.markdown("---")
-
-    # ── 종결순서 점검 전사 요약 (Task 2.5) ── 각 워크스페이스 점검 건수의 합.
-    _ov_pre = _ov_miss = 0
-    _ws_jump_counts = {}
-    for _wsid in ("qc", "qa", "actions"):
-        _a, _b = _ws_closure_counts(_wsid, F)
-        _ws_jump_counts[_wsid] = (_a, _b)
-        _ov_pre += _a; _ov_miss += _b
-    _sig1, _sig2, _sig3 = st.columns([2, 2, 3])
-    _sig1.metric("🧭 선종결 의심(전사)", f"{_ov_pre}건")
-    _sig2.metric("🧭 종결처리 누락(전사)", f"{_ov_miss}건")
-    with _sig3:
-        st.caption("워크스페이스로 점프(소유 레코드 점검)")
-        _jc1, _jc2, _jc3 = st.columns(3)
-        _ws_label_by_id = {w[0]: w[1] for w in _WORKSPACES}
-        for _col, _wsid in ((_jc1, "qc"), (_jc2, "qa"), (_jc3, "actions")):
-            _p, _m = _ws_jump_counts[_wsid]
-            with _col:
-                if st.button(f"{_ws_label_by_id[_wsid]}\n({_p}/{_m})", key=f"jump_{_wsid}", use_container_width=True):
-                    st.session_state["_ws_jump_target"] = _ws_label_by_id[_wsid]
-                    st.rerun()
-    st.caption("※ 표기 = (선종결 의심 / 종결처리 누락). 클릭 시 해당 워크스페이스로 이동해 상세 점검.")
-    st.markdown("---")
-
-    # KPI 산출
-    def _completion_rate(df):
-        if df.empty or "완료여부" not in df.columns:
-            return 0.0
-        return safe_pct((df["완료여부"] == "C").sum(), len(df))
+    S.render_header("경영진 품질 대시보드", f"경영진·전사 통제탑 | MFDS GMP 점검 대비 | {datetime.now().strftime('%Y-%m-%d')}")
 
     primary_year = selected_years[0] if selected_years else current_year
     prev_year = primary_year - 1
 
-    capa_all = pd.concat([fcapa, fcapaai, fai], ignore_index=True) if any(not d.empty for d in [fcapa, fcapaai, fai]) else pd.DataFrame()
-    capa_rate = _completion_rate(capa_all)
-    chg_all = pd.concat([fchg, fchgai], ignore_index=True) if any(not d.empty for d in [fchg, fchgai]) else pd.DataFrame()
-    change_rate = _completion_rate(chg_all)
-
+    # ════════════════════════════════════════════════════════════════════
+    # ① 핵심 (DATA_MAPPING §1) — KPI 4 카드(진척바·목표마커) + 이상신호 3 카드
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("핵심 KPI · 목표 대비", "①")
+    # CAPA 이행률 / 변경 완료율 = safe_pct(weighted_completed, weighted_total)
+    capa_rate = safe_pct(weighted_metric_completed(fcapa), weighted_metric_total(fcapa))
+    change_rate = safe_pct(weighted_metric_completed(fchg), weighted_metric_total(fchg))
+    # 불만 평균처리일 = 접수일~처리완료일 평균
     avg_complaint_days = None
     if not fcmp.empty and "접수일" in fcmp.columns and "처리완료일" in fcmp.columns:
-        receipt = pd.to_datetime(fcmp["접수일"], errors="coerce")
-        complete = pd.to_datetime(fcmp["처리완료일"], errors="coerce")
-        delta = (complete - receipt).dt.days.dropna()
-        if not delta.empty:
-            avg_complaint_days = round(delta.mean(), 1)
+        _rcpt = pd.to_datetime(fcmp["접수일"], errors="coerce")
+        _cmpl = pd.to_datetime(fcmp["처리완료일"], errors="coerce")
+        _dd = (_cmpl - _rcpt).dt.days.dropna()
+        if not _dd.empty:
+            avg_complaint_days = round(_dd.mean(), 1)
+    # 기한초과(전사) = 전 프로젝트 weighted_metric_overdue 합
+    overdue_total = sum(weighted_metric_overdue(df_p) for df_p in F.values())
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        S.kpi_stat_card(capa_rate, KPI_TARGETS["CAPA 이행률"], "CAPA 이행률")
+    with k2:
+        S.kpi_stat_card(change_rate, KPI_TARGETS["변경 완료율"], "변경 완료율")
+    with k3:
+        _cval = avg_complaint_days if avg_complaint_days is not None else 0
+        S.kpi_stat_card(_cval, KPI_TARGETS["불만 평균처리일"], "불만 평균처리일", suffix="일", inverse=True)
+    with k4:
+        # 기한초과는 '낮을수록 좋음' → inverse, 목표 0(초과 없음). 진척바는 0 기준.
+        S.kpi_stat_card(round(overdue_total), 0, "기한초과(전사)", suffix="건", inverse=True, max_val=max(round(overdue_total), 1))
 
-    # KPI 1: Analyst error 감소율(막대) + 게이지 3개 (QMS_Dashboard.py 마감회의 탭과 동일 로직)
-    g1, g2, g3, g4 = st.columns(4)
-    with g1:
-        render_analyst_error_reduction_kpi(
-            foos, ALL_DFS.get("oos", pd.DataFrame()), primary_year, prev_year, year_col=YEAR_FILTER_COL
-        )
-    with g2:
-        # 진척 바 KPI 스탯 카드(반원 게이지 대체). 전년 델타는 이 지표들엔 미계산 → 생략.
-        S.kpi_stat_card(capa_rate, 90, "CAPA 이행률")
-    with g3:
-        S.kpi_stat_card(change_rate, 85, "변경 완료율")
-    with g4:
-        val = avg_complaint_days if avg_complaint_days is not None else 0
-        S.kpi_stat_card(val, 30, "불만 평균처리일", suffix="일", inverse=True)
-
-    st.divider()
-
-    # 프로젝트별 KPI 카드 (주요 8개) — 스파크라인 포함
-    S.section_header("프로젝트별 현황 요약", "📋")
-    main_projects = [
-        ("oos", foos), ("deviation", fdev), ("capa", fcapa), ("actionitem", fai),
-        ("changemanagement", fchg), ("complain", fcmp), ("extension", fext), ("investigation", finv),
-    ]
-    kpi_cols = st.columns(8)
-    for col_ui, (pk, df_p) in zip(kpi_cols, main_projects):
-        label = PROJECT_META[pk]["label"]
-        color = PROJECT_META[pk]["color"]
-        total = weighted_metric_total(df_p)
-        done = weighted_metric_completed(df_p)
-        rate = safe_pct(done, total)
-        overdue = weighted_metric_overdue(df_p)
-        # 월별 스파크라인 데이터
-        mc = _month_col_for_df(df_p)
-        spark = []
-        if not df_p.empty and mc in df_p.columns:
-            _s = _monthly_weighted_series(df_p, mc)
-            spark = [round(v) for v in _s["건수"].tolist()]
-        status = "bad" if overdue > 0 else ("good" if rate >= 80 else "warn")
-        delta_str = f"완료 {rate:.0f}%" if done else None
-        with col_ui:
-            S.metric_with_sparkline(
-                label=label,
-                value=f"{round(total)}건",
-                delta=delta_str,
-                spark_values=spark,
-                spark_color=color,
-                status=status,
-            )
+    # · 이상신호 3 카드: 종결순서 점검(2.5 요약) / 재발 / Analyst error
+    st.caption("전사 이상신호")
+    _sg1, _sg2, _sg3 = st.columns(3)
+    # 종결순서 점검 = 2.5 와 동일 수치(워크스페이스 합 = 전 DF 카운트)
+    _ov_pre = _ov_miss = 0
+    for _wsid in ("qc", "qa", "actions"):
+        _a, _b = _ws_closure_counts(_wsid, F)
+        _ov_pre += _a; _ov_miss += _b
+    with _sg1:
+        st.metric("🧭 종결순서 점검", f"{_ov_pre + _ov_miss}건",
+                  help=f"선종결 의심 {_ov_pre} · 종결처리 누락 {_ov_miss} (이상 케이스 플래그 2종 합)")
+        st.caption(f"선종결 {_ov_pre} · 누락 {_ov_miss}")
+        if st.button("점검하러 가기 →", key="sig_jump_closure", use_container_width=True):
+            st.session_state["_ws_jump_target"] = "QA 품질운영"
+            st.rerun()
+    # 재발 = 재발여부 비어있지 않음(기존 코드 로직, deviation+외주). DATA_MAPPING '예' 문구는
+    # 실데이터에 '예' 값이 없어, 코드 기존 정의(notna·non-empty)에 바인딩(보고서에 명시).
+    _recur_n = 0
+    for _rk in ("deviation", "deviationoutsourcing"):
+        _rdf = F.get(_rk)
+        if _rdf is not None and not _rdf.empty and "재발여부" in _rdf.columns:
+            _rb = _rdf.drop_duplicates(subset=["관리번호"]) if "관리번호" in _rdf.columns else _rdf
+            _recur_n += int((_rb["재발여부"].notna() & (_rb["재발여부"].astype(str).str.strip() != "") & (_rb["재발여부"].astype(str).str.strip() != "아니요")).sum())
+    _sg2.metric("↻ 재발", f"{_recur_n}건", help="일탈(자사+외주) 재발여부 표기 건수(빈값·'아니요' 제외)")
+    # Analyst error = 이상발생 원인=="Analyst error" 건수기여도(oos+dev)
+    _ae_df = pd.concat([d for d in (foos, fdev) if not d.empty], ignore_index=True) if any(not d.empty for d in (foos, fdev)) else pd.DataFrame()
+    _ae_n = 0
+    if not _ae_df.empty and "이상발생 원인" in _ae_df.columns:
+        _ae_hit = _ae_df[_ae_df["이상발생 원인"] == "Analyst error"]
+        _ae_n = round(_ae_hit["건수기여도"].sum()) if "건수기여도" in _ae_hit.columns else len(_ae_hit)
+    _sg3.metric("🔬 Analyst error", f"{_ae_n}건", help="이상발생 원인='Analyst error' 건수기여도 합(OOS+일탈)")
 
     st.divider()
 
-    # 월별 추이 (주요 5개 프로젝트 라인) + 트렌드 예측선
-    S.section_header("월별 발생 건수 추이", "📈")
-    _show_forecast = st.toggle("3개월 예측선 표시", value=False, key="kpi_forecast")
-    fig_trend = go.Figure()
-    for pk, df_p in [("oos", foos), ("deviation", fdev), ("capa", fcapa), ("changemanagement", fchg), ("complain", fcmp)]:
-        mc = _month_col_for_df(df_p)
-        if df_p.empty or mc not in df_p.columns:
-            continue
-        full = _monthly_weighted_series(df_p, mc)
-        ys = [round(v) for v in full["건수"].tolist()]
-        color = PROJECT_META[pk]["color"]
-        label = PROJECT_META[pk]["label"]
-        fig_trend.add_trace(go.Scatter(
-            x=MONTH_LABELS, y=ys, name=label,
-            mode="lines+markers", line=dict(color=color, width=2), marker=dict(size=5),
-        ))
-        if _show_forecast:
-            # 데이터 있는 월만 사용해 선형 회귀 예측
-            xs_fit = [i for i, v in enumerate(ys) if v > 0]
-            ys_fit = [ys[i] for i in xs_fit]
-            if len(xs_fit) >= 3:
-                try:
-                    coef = np.polyfit(xs_fit, ys_fit, 1)
-                    fc_x = list(range(12, 15))
-                    fc_y = [max(0, round(np.polyval(coef, x))) for x in fc_x]
-                    fc_labels = ["13월(예측)", "14월(예측)", "15월(예측)"]
-                    fig_trend.add_trace(go.Scatter(
-                        x=fc_labels, y=fc_y, name=f"{label} 예측",
-                        mode="lines+markers",
-                        line=dict(color=color, width=1.5, dash="dot"),
-                        marker=dict(size=4, symbol="diamond"),
-                        showlegend=False,
-                    ))
-                except Exception:
-                    pass
-    fig_trend.update_layout(
-        height=360, margin=dict(l=40, r=20, t=10, b=40),
-        plot_bgcolor=S.CHART_SURFACE,
-        legend=dict(orientation="h", y=1.08, x=0.5, xanchor="center"),
-    )
-    fig_trend.update_xaxes(showgrid=True, gridcolor="#f0f0f0")
-    fig_trend.update_yaxes(showgrid=True, gridcolor="#f0f0f0")
-    st.plotly_chart(fig_trend, use_container_width=True)
+    # ════════════════════════════════════════════════════════════════════
+    # ② 추세·분포 (DATA_MAPPING §1) — 월별 품질이상 추세(누적) + 이상발생 원인 도넛
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("추세 · 분포", "②")
+    t1, t2 = st.columns([2, 1])
+    with t1:
+        st.caption("월별 품질이상 추세 (OOS + 일탈, 건수기여도 누적)")
+        _mc_o = _month_col_for_df(foos)
+        _mc_d = _month_col_for_df(fdev)
+        _oos_m = [round(v) for v in _monthly_weighted_series(foos, _mc_o)["건수"].tolist()] if (not foos.empty and _mc_o in foos.columns) else [0] * 12
+        _dev_m = [round(v) for v in _monthly_weighted_series(fdev, _mc_d)["건수"].tolist()] if (not fdev.empty and _mc_d in fdev.columns) else [0] * 12
+        fig_tr = go.Figure()
+        fig_tr.add_trace(go.Bar(x=MONTH_LABELS, y=_oos_m, name="OOS", marker_color=CHART_COLORS["blue"]))
+        fig_tr.add_trace(go.Bar(x=MONTH_LABELS, y=_dev_m, name="일탈", marker_color=CHART_COLORS["teal"]))
+        fig_tr.update_layout(barmode="stack", height=320, margin=dict(l=40, r=20, t=10, b=40),
+                             plot_bgcolor=S.CHART_SURFACE, legend=dict(orientation="h", y=1.1, x=0.5, xanchor="center"))
+        st.plotly_chart(fig_tr, use_container_width=True)
+    with t2:
+        st.caption("이상발생 원인 분포 (OOS + 일탈)")
+        if not _ae_df.empty and "이상발생 원인" in _ae_df.columns:
+            _cause = _wgroupby(_ae_df[_ae_df["이상발생 원인"].fillna("").str.strip() != ""], "이상발생 원인", name="건수")
+            if not _cause.empty:
+                fig_dn = px.pie(_cause, values="건수", names="이상발생 원인", hole=0.5,
+                                color_discrete_sequence=CHART_SEQUENCE)
+                fig_dn.update_layout(height=320, margin=dict(l=0, r=0, t=10, b=10),
+                                     legend=dict(orientation="h", y=-0.1))
+                st.plotly_chart(fig_dn, use_container_width=True)
+            else:
+                S.empty_state("이상발생 원인 데이터가 없습니다.")
+        else:
+            S.empty_state("이상발생 원인 데이터가 없습니다.")
 
     st.divider()
 
-    # 하단 2단: 기한초과 + 신규 프로젝트 분포
-    ov1, ov2 = st.columns(2)
-    with ov1:
-        S.section_header("🚨 기한 초과 항목 (전 프로젝트)")
-        overdue_frames = []
+    # ════════════════════════════════════════════════════════════════════
+    # ③ 상세·점검 (DATA_MAPPING §1) — 기한 위험 테이블(🔗) + 종결순서 점검 요약
+    # ════════════════════════════════════════════════════════════════════
+    S.section_header("상세 · 점검", "③")
+    d1, d2 = st.columns([3, 2])
+    with d1:
+        st.caption("🚨 기한 위험 — 즉시 조치 (전 프로젝트 D-day 오름차순)")
+        _ov_frames = []
         for pk, df_p in F.items():
             if df_p.empty or "D-day" not in df_p.columns:
                 continue
-            dday_num = _num_series(df_p["D-day"], default=0.0)
-            over = df_p[dday_num < 0].copy()
-            if not over.empty:
-                over["프로젝트"] = PROJECT_META[pk]["label"]
-                overdue_frames.append(over)
-        if overdue_frames:
-            overdue_all = pd.concat(overdue_frames, ignore_index=True)
-            disp = ["프로젝트"] + [c for c in ["관리번호", "제목", "기한일", "D-day"] if c in overdue_all.columns]
-            st.dataframe(overdue_all[disp].sort_values("D-day").head(20),
-                         use_container_width=True, hide_index=True, height=320,
+            _dn = _num_series(df_p["D-day"], default=0.0)
+            _over = df_p[_dn < 0].copy()
+            if not _over.empty:
+                _over["프로젝트"] = PROJECT_META[pk]["label"]
+                _ov_frames.append(_over)
+        if _ov_frames:
+            _oa = pd.concat(_ov_frames, ignore_index=True)
+            _team_col = "작성팀" if "작성팀" in _oa.columns else None
+            _cols = ["프로젝트"] + [c for c in ["관리번호", "제목", _team_col, "기한일", "D-day", "진행상태"] if c and c in _oa.columns]
+            _top = _oa.sort_values("D-day").head(20)
+            st.dataframe(_top[_cols], use_container_width=True, hide_index=True, height=300,
                          column_config={"D-day": st.column_config.NumberColumn("D-day", format="%d일")})
+            # 행 드릴다운: 관리번호 선택 → 2.4 드로어
+            _prnos = _top["관리번호"].astype(str).tolist() if "관리번호" in _top.columns else []
+            if _prnos:
+                _cs, _cb = st.columns([3, 1])
+                with _cs:
+                    _sel = st.selectbox("관리번호", _prnos, key="ov_overdue_sel", label_visibility="collapsed")
+                with _cb:
+                    if st.button("🔗 연계 보기", key="ov_overdue_btn", use_container_width=True):
+                        show_linkage_drawer(_sel)
         else:
             st.success("기한 초과 항목이 없습니다.")
-
-    with ov2:
-        S.section_header("프로젝트별 진행/완료 비율", "📊")
-        status_rows = []
-        for pk, df_p in F.items():
-            if df_p.empty:
-                continue
-            tw = weighted_metric_total(df_p)
-            dw = weighted_metric_completed(df_p)
-            if tw > 0:
-                status_rows.append({
-                    "프로젝트": PROJECT_META[pk]["label"],
-                    "진행중": round(tw - dw, 2),
-                    "완료": round(dw, 2),
-                })
-        if status_rows:
-            sdf = pd.DataFrame(status_rows).sort_values("진행중", ascending=True)
-            fig_s = go.Figure()
-            fig_s.add_trace(go.Bar(name="진행중", x=sdf["진행중"], y=sdf["프로젝트"], orientation="h",
-                                    marker_color=CHART_COLORS["orange"], text=sdf["진행중"], textposition="inside"))
-            fig_s.add_trace(go.Bar(name="완료", x=sdf["완료"], y=sdf["프로젝트"], orientation="h",
-                                    marker_color=CHART_COLORS["green"], text=sdf["완료"], textposition="inside"))
-            fig_s.update_layout(barmode="stack", height=360, margin=dict(l=0, r=20, t=10, b=10),
-                                 legend=dict(orientation="h", y=1.05), plot_bgcolor=S.CHART_SURFACE)
-            st.plotly_chart(fig_s, use_container_width=True)
+    with d2:
+        st.caption("🧭 종결순서 점검 — 전사 요약")
+        st.metric("선종결 의심", f"{_ov_pre}건", help=_LINKAGE_FLAG_HELP[_FLAG_PRE])
+        st.metric("종결처리 누락", f"{_ov_miss}건", help=_LINKAGE_FLAG_HELP[_FLAG_MISS])
+        st.caption("상세는 각 워크스페이스 하단 '종결순서 점검' 패널에서 (소유 레코드 기준).")
 
     st.divider()
 
-    # YoY 비교 파넬 (전년 대비)
-    S.section_header("전년 대비 주요 지표 (YoY)", "📅")
-    _yoy_projects = [("oos", foos), ("deviation", fdev), ("capa", fcapa), ("complain", fcmp)]
-    _yoy_rows = []
-    for pk, df_p in _yoy_projects:
-        if df_p.empty:
-            continue
-        ycol_yoy = YEAR_FILTER_COL if YEAR_FILTER_COL in df_p.columns else "연도"
-        if ycol_yoy not in df_p.columns:
-            continue
-        py = selected_years[0] if selected_years else current_year
-        prev_y = py - 1
-        curr_cnt = _wcount(df_p[df_p[ycol_yoy] == py]) if py else 0
-        prev_cnt = _wcount(df_p[df_p[ycol_yoy] == prev_y]) if prev_y else 0
-        _yoy_rows.append({
-            "프로젝트": PROJECT_META[pk]["label"],
-            f"{prev_y}년": prev_cnt,
-            f"{py}년": curr_cnt,
-            "증감": curr_cnt - prev_cnt,
-            "증감률": f"{(curr_cnt - prev_cnt) / prev_cnt * 100:+.1f}%" if prev_cnt > 0 else "-",
-        })
-    if _yoy_rows:
-        _yoy_df = pd.DataFrame(_yoy_rows)
-        _yoy_curr = selected_years[0] if selected_years else current_year
-        _yoy_prev = _yoy_curr - 1
-        prev_col = f"{_yoy_prev}년"
-        curr_col = f"{_yoy_curr}년"
-        fig_yoy = go.Figure()
-        fig_yoy.add_trace(go.Bar(
-            name=prev_col, x=_yoy_df["프로젝트"], y=_yoy_df[prev_col],
-            marker_color=CHART_COLORS["gray"], text=_yoy_df[prev_col], textposition="outside",
-        ))
-        fig_yoy.add_trace(go.Bar(
-            name=curr_col, x=_yoy_df["프로젝트"], y=_yoy_df[curr_col],
-            marker_color=CHART_COLORS["blue"], text=_yoy_df[curr_col], textposition="outside",
-        ))
-        fig_yoy.update_layout(
-            barmode="group", height=300,
-            margin=dict(l=10, r=10, t=20, b=10),
-            plot_bgcolor=S.CHART_SURFACE,
-            legend=dict(orientation="h", y=1.08),
-        )
-        st.plotly_chart(fig_yoy, use_container_width=True)
-        _yoy_disp = [c for c in _yoy_df.columns if c != "증감"]
-        st.dataframe(_yoy_df[_yoy_disp], use_container_width=True, hide_index=True)
+    # · 수집 상태 — 16개 프로젝트 건수 그리드 (관리번호.nunique)
+    S.section_header("수집 상태 (16개 프로젝트)", "▦")
+    _grid_cols = st.columns(8)
+    _gi = 0
+    for pk, df_p in ALL_DFS.items():
+        if pk == "deviationoutsourcing":
+            continue  # 일탈에 통합 표기
+        _n = df_p["관리번호"].nunique() if not df_p.empty and "관리번호" in df_p.columns else len(df_p)
+        with _grid_cols[_gi % 8]:
+            st.metric(PROJECT_META[pk]["label"], f"{_n}건")
+        _gi += 1
 
     S.render_footer()
 
@@ -2478,18 +2394,10 @@ if _render_tab("capa"):
                     delta=f"{safe_pct(cai_d + ai_d, cai_t + ai_t):.0f}%")
 
         st.divider()
-        S.section_header("모니터링AI 이행률 게이지")
+        # [Task 2.6] 반원 게이지 제거 → 진척 바 KPI 스탯 카드(토큰 일관). 게이지 잔존 0.
+        S.section_header("모니터링AI 이행률")
         ai_rate = safe_pct(ai_d, ai_t)
-        fig_g = go.Figure(go.Indicator(mode="gauge+number", value=ai_rate,
-            number={"suffix": "%", "font": {"size": 36}},
-            gauge={"axis": {"range": [0, 100]},
-                    "bar": {"color": CHART_COLORS["blue"]},
-                    "steps": [{"range": [0, 50], "color": "#ffebee"},
-                              {"range": [50, 80], "color": "#fff3e0"},
-                              {"range": [80, 100], "color": "#e8f5e9"}],
-                    "threshold": {"line": {"color": CHART_COLORS["red"], "width": 3}, "value": 80}}))
-        fig_g.update_layout(height=260, margin=dict(l=20, r=20, t=30, b=10))
-        st.plotly_chart(fig_g, use_container_width=True)
+        S.kpi_stat_card(round(ai_rate, 1), 80, "모니터링AI 이행률")
 
     with capa_deadline:
         S.section_header("기한 초과·지연 현황")
