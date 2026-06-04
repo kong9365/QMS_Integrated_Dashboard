@@ -4,6 +4,11 @@
 !secrets.example.env
 .streamlit/secrets.toml
 
+# ===== 알림 명부(개인정보: 이름·이메일) — 절대 커밋 금지 =====
+contact*.xls*
+*_roster.xls*
+.qms_roster/
+
 # ===== Python =====
 __pycache__/
 *.pyc

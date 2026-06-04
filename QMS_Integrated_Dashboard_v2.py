@@ -3426,14 +3426,72 @@ if _render_tab("settings"):
                 except Exception as e:
                     st.error(f"전송 실패: {e}")
         st.divider()
-        st.markdown("**기한 초과 알림 즉시 실행**")
-        if st.button("🚨 지금 기한 초과 알림 발송", use_container_width=True):
-            try:
-                from qms_pro.services import alert_service as _al
-                _al.run_overdue_alert(F, PROJECT_META)
-                st.success("알림 발송 완료")
-            except Exception as e:
-                st.error(f"알림 발송 실패: {e}")
+        # ── [①] 수신자 명부 보기 (읽기전용) — 사내 주소록(이름·이메일) ──
+        S.section_header("📒 수신자 명부 (읽기전용)")
+        try:
+            from qms_pro.services import alert_service as _al
+            _n2e, _rdf = _al.load_alert_roster()
+        except Exception:
+            _n2e, _rdf = {}, None
+        if _rdf is not None and not _rdf.empty:
+            st.caption(f"등록 {len(_rdf):,}명 · 사내 알림 명부")
+            _rc1, _rc2 = st.columns([2, 1])
+            with _rc1:
+                st.dataframe(_rdf, use_container_width=True, hide_index=True, height=260)
+            with _rc2:
+                _pick = st.selectbox("이름으로 빠른 조회", [""] + _rdf["이름"].tolist(), key="cfg_roster_pick")
+                if _pick:
+                    st.text_input("이메일", value=_n2e.get(_pick, ""), disabled=True, key="cfg_roster_email")
+            st.caption("※ 읽기 전용 — 명부 등록·수정은 개발자(품질부문 AI TF)에게 요청하세요.")
+        else:
+            S.empty_state("알림 명부가 미등록 상태입니다(주소록 파일 없음/비어 있음).")
+
+        st.divider()
+        st.markdown("**기한 초과 알림 — 라우팅 미리보기 & 발송**")
+        _ar1, _ar2 = st.columns(2)
+        with _ar1:
+            if st.button("🔎 라우팅 미리보기 (dry-run · 발송 없음)", use_container_width=True, key="cfg_route_preview"):
+                try:
+                    from qms_pro.services import alert_service as _al
+                    _n2e2, _ = _al.load_alert_roster()
+                    st.session_state["_route_preview"] = _al.preview_overdue_routing(F, PROJECT_META, _n2e2)
+                except Exception as _e:
+                    st.error(f"미리보기 실패: {_e}")
+        with _ar2:
+            if st.button("🚨 지금 기한 초과 알림 발송 (콤마목록)", use_container_width=True):
+                try:
+                    from qms_pro.services import alert_service as _al
+                    _al.run_overdue_alert(F, PROJECT_META)
+                    st.success("알림 발송 완료")
+                except Exception as e:
+                    st.error(f"알림 발송 실패: {e}")
+        # ── [②] dry-run 미리보기 결과 (실제 발송 0건) ──
+        _rep = st.session_state.get("_route_preview")
+        if _rep:
+            st.markdown("##### 🔎 담당자·등록자 라우팅 미리보기 (dry-run — 실제 발송 0건)")
+            _mc = st.columns(4)
+            _mc[0].metric("대상 건(미완료·미취소·D-day<0)", _rep["items_total"])
+            _mc[1].metric("개인 수신자", _rep["recipients"])
+            _mc[2].metric("미매칭 이름(종)", _rep["unmatched_unique"])
+            _mc[3].metric("관리자 fallback 건", _rep["admin_fallback_count"])
+            with st.expander("프로젝트별 사용 컬럼 (담당자/등록자 자동 탐색 결과)"):
+                st.dataframe(pd.DataFrame([
+                    {"프로젝트": k, "담당자 컬럼": v["담당자"] or "—", "등록자 컬럼": v["등록자"] or "—"}
+                    for k, v in _rep["columns_used"].items()
+                ]), use_container_width=True, hide_index=True)
+            if _rep["person_table"]:
+                st.caption("수신자별 개인 다이제스트(미리보기 · 사람당 1통 예정)")
+                st.dataframe(pd.DataFrame([
+                    {"이름": p["이름"], "이메일": p["이메일"], "건수": p["건수"],
+                     "역할": ", ".join(f"{k} {v}" for k, v in p["역할분포"].items())}
+                    for p in _rep["person_table"]
+                ]), use_container_width=True, hide_index=True, height=220)
+            if _rep["unmatched_names"]:
+                _un = ", ".join(f"{n}({c})" for n, c in _rep["unmatched_names"].items())
+                st.warning(f"⚠ 명부 미매칭 담당자/등록자 {_rep['unmatched_unique']}종: {_un}\n\n"
+                           "→ 1) 해당 담당자에게 알림을 전달, 2) 명부 등록은 개발자(품질부문 AI TF)에게 요청.")
+            st.caption("※ 1차는 미리보기 전용입니다 — 실제 개인 발송은 다음 단계 승인 후 활성화됩니다. "
+                       "현재 발송 경로(콤마목록)는 그대로 보존됩니다.")
 
     with cfg_tab4:
         S.section_header("시스템 정보")

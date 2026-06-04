@@ -22,6 +22,9 @@ urllib3==2.0.4
 # Excel 내보내기 (pd.ExcelWriter)
 openpyxl==3.1.5
 
+# 알림 명부(.xls) 읽기 (qms_alert.load_alert_roster — OLE2 .xls 전용)
+xlrd==2.0.2
+
 # 선택: PyArrow (pandas 가 Parquet/Arrow 사용 시)
 pyarrow==19.0.1
 

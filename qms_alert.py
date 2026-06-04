@@ -225,6 +225,168 @@ def run_overdue_alert(F: dict, PROJECT_META: dict, threshold_days: int = 0) -> d
     return results
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# 알림 명부(수신자 라우팅) — 1차: 표시·미리보기(dry-run)만. **실제 발송 없음.**
+#   · load_alert_roster        : 사내 주소록(이름→이메일) 로더(단일 소스, ①②가 공용)
+#   · normalize_person_name    : 이름 정규화(공백/괄호/직급 제거)
+#   · preview_overdue_routing  : 기한위험(미완료·미취소·D-day<0) 건을 담당자+등록자
+#     개인 다이제스트로 라우팅한 결과를 '리포트(dict)'로 반환(발송 0).
+# 기존 send_*/run_overdue_alert(콤마목록) 경로는 변경하지 않는다(fallback 보존).
+# 개인정보(이름·이메일)는 로컬 파일에서만 읽으며 어떤 주소도 상수로 두지 않고 로깅하지 않는다.
+# ════════════════════════════════════════════════════════════════════════════
+_ROSTER_NAME_COLS = ("이름", "성명", "name")
+_ROSTER_EMAIL_COLS = ("전자우편", "이메일", "email", "e-mail", "메일")
+MANAGER_COL_CANDIDATES = ("담당자",)
+REGISTRANT_COL_CANDIDATES = ("등록자",)
+
+
+def _default_roster_path() -> str:
+    p = os.environ.get("QMS_ALERT_ROSTER_PATH", "").strip()
+    if p:
+        return p
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "contact (1).xls")
+
+
+def load_alert_roster(path=None):
+    """사내 알림 명부 로더(단일 소스) → (name_to_email: dict, df: DataFrame[이름,이메일]).
+
+    시트 '주소록'(없으면 첫 시트)의 이름/전자우편을 읽어 이름 strip 정규화.
+    파일 없거나 비면 ({}, 빈 DataFrame). *개인정보는 로깅하지 않는다.*
+    """
+    import pandas as pd
+    empty = ({}, pd.DataFrame(columns=["이름", "이메일"]))
+    path = path or _default_roster_path()
+    if not path or not os.path.exists(path):
+        return empty
+    try:
+        engine = "xlrd" if str(path).lower().endswith(".xls") else "openpyxl"
+        xls = pd.ExcelFile(path, engine=engine)
+        sheet = "주소록" if "주소록" in xls.sheet_names else xls.sheet_names[0]
+        df = pd.read_excel(xls, sheet_name=sheet)
+    except Exception:
+        return empty
+    name_col = next((c for c in df.columns if str(c).strip() in _ROSTER_NAME_COLS), None)
+    email_col = next((c for c in df.columns if str(c).strip() in _ROSTER_EMAIL_COLS), None)
+    if name_col is None or email_col is None:
+        return empty
+    out = df[[name_col, email_col]].copy()
+    out.columns = ["이름", "이메일"]
+    out["이름"] = out["이름"].astype(str).str.strip()
+    out["이메일"] = out["이메일"].astype(str).str.strip()
+    out = out[(out["이름"] != "") & (out["이름"].str.lower() != "nan")
+              & (out["이메일"].str.contains("@", na=False))]
+    return dict(zip(out["이름"], out["이메일"])), out.reset_index(drop=True)
+
+
+_NAME_TITLES = (
+    "사장", "부사장", "전무", "상무", "이사", "부장", "차장", "과장", "대리", "사원",
+    "팀장", "실장", "본부장", "센터장", "그룹장", "파트장", "직장", "반장",
+    "선임", "책임", "수석", "주임", "연구원", "연구위원", "매니저", "원장", "소장", "님",
+)
+
+
+def normalize_person_name(name) -> str:
+    """이름 정규화: 괄호 표기·후행 직급 제거(이름 내부 공백은 보존). '홍길동(QC2)'·'홍길동 차장' → '홍길동'."""
+    import re
+    if name is None:
+        return ""
+    s = str(name).strip()
+    if not s or s.lower() == "nan":
+        return ""
+    s = re.sub(r"[\(\（\[].*?[\)\）\]]", "", s).strip()   # 괄호/대괄호 안 제거
+    # 후행 직급(공백 동반)만 제거 — 내부 공백 이름은 보존
+    for _t in _NAME_TITLES:
+        if s.endswith(" " + _t):
+            s = s[: -len(_t)].strip()
+            break
+    return s.strip()
+
+
+def _resolve_person_cols(df):
+    cols = list(df.columns)
+    mgr = next((c for c in MANAGER_COL_CANDIDATES if c in cols), None)
+    reg = next((c for c in REGISTRANT_COL_CANDIDATES if c in cols), None)
+    return mgr, reg
+
+
+def preview_overdue_routing(F: dict, PROJECT_META: dict, name_to_email: dict,
+                            threshold_days: int = 0) -> dict:
+    """기한위험(미완료·미취소·D-day<0) 건을 담당자+등록자 개인 다이제스트로 라우팅 — **dry-run**.
+
+    실제 발송은 하지 않고 라우팅 결과 리포트(dict)만 반환. 활성(미완료·미취소) 필터는
+    domain.metrics.active_mask 재사용(없으면 D-day<0 만).
+    """
+    import pandas as pd
+    try:
+        from qms_pro.domain.metrics import active_mask
+    except Exception:
+        active_mask = None
+
+    cols_used, items = {}, []
+    for pk, df_p in F.items():
+        if df_p is None or getattr(df_p, "empty", True) or "D-day" not in df_p.columns:
+            continue
+        label = PROJECT_META.get(pk, {}).get("label", pk)
+        mgr_col, reg_col = _resolve_person_cols(df_p)
+        cols_used[label] = {"담당자": mgr_col, "등록자": reg_col}
+        sub = df_p
+        if active_mask is not None:
+            try:
+                sub = df_p[active_mask(df_p)]
+            except Exception:
+                sub = df_p
+        dd = pd.to_numeric(sub["D-day"], errors="coerce")
+        for _, row in sub[dd.notna() & (dd < threshold_days)].iterrows():
+            items.append({
+                "관리번호": row.get("관리번호", "-"), "프로젝트": label,
+                "제목": row.get("제목", "-"), "기한일": row.get("기한일", "-"),
+                "D-day": int(row["D-day"]) if pd.notna(row.get("D-day")) else None,
+                "담당자_raw": row.get(mgr_col) if mgr_col else None,
+                "등록자_raw": row.get(reg_col) if reg_col else None,
+            })
+
+    digests, unmatched_names, admin_fallback = {}, {}, []
+    for it in items:
+        cands = [(role, normalize_person_name(it.get(key)))
+                 for role, key in (("담당자", "담당자_raw"), ("등록자", "등록자_raw"))]
+        cands = [(r, nm) for r, nm in cands if nm]
+        seen, dedup = set(), []
+        for r, nm in cands:
+            if nm not in seen:
+                seen.add(nm); dedup.append((r, nm))
+        matched = [(r, nm) for r, nm in dedup if nm in name_to_email]
+        unmatched = [(r, nm) for r, nm in dedup if nm not in name_to_email]
+        for r, nm in unmatched:
+            unmatched_names[nm] = unmatched_names.get(nm, 0) + 1
+        if not matched:
+            admin_fallback.append(it)
+            continue
+        other_unmatched = ", ".join(sorted({nm for _, nm in unmatched}))
+        for r, nm in matched:
+            d = digests.setdefault(name_to_email[nm], {"이름": nm, "items": []})
+            d["items"].append({**{k: it[k] for k in ("관리번호", "프로젝트", "제목", "기한일", "D-day")},
+                               "역할": r, "상대미매칭": other_unmatched})
+
+    person_table = []
+    for email, d in digests.items():
+        roles = {}
+        for r in d["items"]:
+            roles[r["역할"]] = roles.get(r["역할"], 0) + 1
+        person_table.append({"이름": d["이름"], "이메일": email, "건수": len(d["items"]), "역할분포": roles})
+    person_table.sort(key=lambda x: -x["건수"])
+    return {
+        "dry_run": True,
+        "items_total": len(items),
+        "columns_used": cols_used,
+        "recipients": len(digests),
+        "person_table": person_table,
+        "unmatched_names": dict(sorted(unmatched_names.items(), key=lambda x: -x[1])),
+        "unmatched_unique": len(unmatched_names),
+        "admin_fallback_count": len(admin_fallback),
+        "digests": digests,
+    }
+
+
 # ─── CLI 진입점 ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

@@ -18,10 +18,16 @@ from qms_alert import (
     send_slack,
     send_email,
     run_overdue_alert,
+    load_alert_roster,
+    normalize_person_name,
+    preview_overdue_routing,
 )
 
 __all__ = [
     "send_slack",
     "send_email",
     "run_overdue_alert",
+    "load_alert_roster",
+    "normalize_person_name",
+    "preview_overdue_routing",
 ]
