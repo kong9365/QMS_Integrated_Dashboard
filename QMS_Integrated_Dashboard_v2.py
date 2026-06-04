@@ -218,6 +218,7 @@ from qms_pro.domain.metrics import (
     weighted_metric_total,
     weighted_metric_completed,
     weighted_metric_overdue,
+    active_mask,           # '기한 초과/위험' 통일: 살아있는(미완료·미취소) 행 마스크
     _wcount,
     _wgroupby,
     _num_series,
@@ -1944,9 +1945,9 @@ def render_event_category_tab(
 # 탭 구성
 # ============================================================================
 
-# 기한 초과 건수 계산 (탭 배지용)
+# 기한 초과 건수 계산 (탭 배지용) — '기한 초과' 통일: 살아있는(미완료·미취소) 행만 카운트.
 _overdue_all_count = sum(
-    int(df_p["D-day"].lt(0).sum())
+    int(df_p[active_mask(df_p)]["D-day"].lt(0).sum())
     for df_p in F.values()
     if not df_p.empty and "D-day" in df_p.columns
 )
@@ -2118,8 +2119,8 @@ if _render_tab("exec"):
         _dd = (_cmpl - _rcpt).dt.days.dropna()
         if not _dd.empty:
             avg_complaint_days = round(_dd.mean(), 1)
-    # 기한초과(전사) = 전 프로젝트 weighted_metric_overdue 합
-    overdue_total = sum(weighted_metric_overdue(df_p) for df_p in F.values())
+    # 기한초과(전사) = 전 프로젝트 weighted_metric_overdue 합 — '기한 초과' 통일: 살아있는(미완료·미취소)만.
+    overdue_total = sum(weighted_metric_overdue(df_p[active_mask(df_p)]) for df_p in F.values())
     k1, k2, k3, k4 = st.columns(4)
     with k1:
         C.kpi_stat_card(capa_rate, KPI_TARGETS["CAPA 이행률"], "CAPA 이행률")
@@ -3707,11 +3708,11 @@ if _render_tab("alerts_new"):
     # ① 기한 위험 모니터링 (전 프로젝트 D-day 재사용 — 신규 로직 0, 건수기여도 합)
     # ════════════════════════════════════════════════════════════════════
     S.section_header("기한 위험 모니터링 (전 프로젝트)", "①")
-    # [버그수정] 완료(종결) 항목 제외 — 상태 Pill과 동일한 derive_status('완료' 최우선) 재사용.
-    #   D-day 만 보면 이미 종결된 과거 건이 '기한 초과'로 잡혀 카운트·표(D-day 오름차순)를 점령한다.
-    #   각 프로젝트 df 를 미완료(_F_open)로 먼저 거른 뒤 카운트·표를 산출(신규 로직 0, 기존 완료판정 재사용).
+    # [기한 초과 통일] 살아있는(미완료·미취소) 건만 — active_mask(완료 + 취소 제외)로 KPI·배지와 단일 기준.
+    #   D-day 만 보면 이미 완료·취소된 과거 건이 '기한 초과'로 잡혀 카운트·표(D-day 오름차순)를 점령한다.
+    #   각 프로젝트 df 를 active(_F_open)로 먼저 거른 뒤 카운트·표를 산출(신규 순수함수 active_mask 재사용).
     _F_open = {
-        _pk: (_d[C.derive_status(_d) != "완료"] if (_d is not None and not _d.empty) else _d)
+        _pk: (_d[active_mask(_d)] if (_d is not None and not _d.empty) else _d)
         for _pk, _d in F.items()
     }
     _over_w = round(sum(weighted_metric_overdue(_d) for _d in _F_open.values()))

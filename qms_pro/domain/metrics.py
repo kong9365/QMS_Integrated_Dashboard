@@ -29,6 +29,36 @@ import pandas as pd
 # QMS_GUI/QMS_Dashboard.py COMPLETED_KEYWORDS 와 동일
 COMPLETED_KEYWORDS = ("시험실 이벤트 종료", "종료", "완료")
 
+# '기한 초과/위험' 통일 정의: 살아있는(조치 필요) 건만 카운트하기 위해 '취소'(종결성)도 제외한다.
+# 진행상태 기준 contains. 사전 확인된 매칭 값: '취소'·'실행 취소'·'취소 승인'(모두 종결성, 살아있는
+# 의미 없음). 기존 도메인 계산(weighted_metric_*)은 불변 — 호출부에서 입력 df 를 미리 거를 때 사용.
+CANCELLED_KEYWORDS = ("취소",)
+
+
+def completed_mask(df: pd.DataFrame) -> pd.Series:
+    """행 단위 완료 마스크 — components._completed_mask 와 동일 정의(키워드 우선, 없으면 완료여부=='C')."""
+    if "진행상태" in df.columns:
+        return df["진행상태"].astype(str).str.contains(
+            "|".join(COMPLETED_KEYWORDS), case=False, na=False
+        )
+    if "완료여부" in df.columns:
+        return df["완료여부"] == "C"
+    return pd.Series(False, index=df.index)
+
+
+def cancelled_mask(df: pd.DataFrame) -> pd.Series:
+    """행 단위 취소 마스크 — '진행상태' 있으면 CANCELLED_KEYWORDS 포함, 없으면 전부 False."""
+    if "진행상태" in df.columns:
+        return df["진행상태"].astype(str).str.contains(
+            "|".join(CANCELLED_KEYWORDS), case=False, na=False
+        )
+    return pd.Series(False, index=df.index)
+
+
+def active_mask(df: pd.DataFrame) -> pd.Series:
+    """살아있는(조치 대상) 행 = 완료도 취소도 아닌 행 — '기한 초과/위험' 통일 기준."""
+    return ~(completed_mask(df) | cancelled_mask(df))
+
 
 def safe_pct(a, b):
     """백분율(소수 1자리). 분모가 0 이하이면 0.0."""
