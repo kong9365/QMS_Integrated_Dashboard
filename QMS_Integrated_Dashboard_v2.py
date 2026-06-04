@@ -519,18 +519,46 @@ st.sidebar.divider()
 # 단일 사이드바 토글(iframe): 사이드바 DOM 생성 이후 주입 — 초기 로드 시 body 전역 관찰로 브라우저 멈춤 방지
 S.inject_sidebar_toggle()
 
+def _load_dotenv_env() -> dict:
+    """레포 루트 ``.env``(KEY=VALUE · # 주석/빈줄 무시)를 dict 로 읽어 반환(없으면 {}).
+
+    refresh_job 은 QMS 자격증명(QMS_API_BASE_URL/QMS_LOGIN_* 등)이 필요하지만, 코드가 .env 를
+    자동 로드하지 않으므로 앱이 .env 없이 떠 있으면 백그라운드 갱신이 빈 base_url 로 **로그인 실패**한다
+    (진단: 'No scheme supplied'). 이 함수로 .env 를 읽어 subprocess 환경에 주입한다
+    (deploy/run_refresh.bat 와 동일 취지). 비밀값은 로깅/출력하지 않는다.
+    """
+    env: dict[str, str] = {}
+    _envp = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    try:
+        with open(_envp, "r", encoding="utf-8") as _f:
+            for _line in _f:
+                _s = _line.strip()
+                if not _s or _s.startswith("#") or "=" not in _s:
+                    continue
+                _k, _v = _s.split("=", 1)
+                env[_k.strip()] = _v.strip()
+    except Exception:
+        pass
+    return env
+
+
 def _trigger_refresh_job_background() -> bool:
     """refresh_job 을 백그라운드 subprocess 로 실행(동기 80s 블로킹 금지, Task 1.3).
 
     캐시를 지우지 않는다(지우면 cache_only 앱이 빈 화면이 됨). 수집이 끝나면
     refresh_job 이 캐시를 원자적으로 교체하고, 다음 새로고침 때 새 데이터가 보인다.
     성공적으로 '시작'했으면 True. (완료를 기다리지 않음)
+
+    [수정] .env 자격증명을 subprocess 환경에 주입한다 — 앱을 .env 없이 `streamlit run` 으로
+    띄워도 백그라운드 갱신이 로그인에 성공하고, 실패 수집이 _meta.json 을 덮어쓰는 일이 없도록 한다.
     """
     try:
+        _sub_env = {**os.environ, **_load_dotenv_env()}
         subprocess.Popen(
             [sys.executable, "-m", "qms_pro.jobs.refresh_job"],
             cwd=os.path.dirname(os.path.abspath(__file__)),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=_sub_env,
         )
         return True
     except Exception:
