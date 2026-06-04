@@ -749,10 +749,10 @@ with _topbar:
                 if _k.startswith("flt_"):
                     del st.session_state[_k]
             st.rerun()
-    # [전역 검색 Task 2.3] 필터바 아래 한 줄 검색 박스. key=flt_search → ↺필터초기화에 자동 포함.
+    # [통합검색 Task 2.3] 필터바 아래 한 줄 검색 박스. key=flt_search → ↺필터초기화에 자동 포함.
     st.text_input(
-        "전역 검색", key="flt_search", label_visibility="collapsed",
-        placeholder="🔍 전역 검색: 관리번호·제목·등록자·제조번호·품목코드 (전 프로젝트 · 필터 무관)",
+        "통합검색", key="flt_search", label_visibility="collapsed",
+        placeholder="🔍 통합검색: 관리번호·제목·등록자·제조번호·품목코드 (전 프로젝트 · 필터 무관)",
     )
 if _failed:
     _shown = ", ".join(_failed[:6]) + (" 외" if len(_failed) > 6 else "")
@@ -2034,14 +2034,14 @@ def _render_tab(tabkey: str) -> bool:
 
 
 # ============================================================================
-# 전역 검색(🔍) 결과 패널 (Task 2.3 보류분) — 검색어가 있을 때만 전 화면 상단에 노출.
+# 통합검색(🔍) 결과 패널 (Task 2.3 보류분) — 검색어가 있을 때만 전 화면 상단에 노출.
 #   전 프로젝트(ALL_DFS) · 필터 무관. 5필드(관리번호·제목·등록자·제조번호·품목코드) OR
 #   매칭은 기존 UIF.apply_search_filters 재사용(신규 매칭 로직 0). 결과 행 🔗 → 드로어.
 #   검색은 레코드 나열(집계 아님) → 관리번호 dedup 표시. 검색어 없으면 패널 미표시.
 # ============================================================================
 _global_q = str(st.session_state.get("flt_search", "") or "").strip()
 if _global_q:
-    S.section_header(f"🔍 전역 검색 결과 — '{_global_q}'  (전 프로젝트 · 필터 무관)")
+    S.section_header(f"🔍 통합검색 결과 — '{_global_q}'  (전 프로젝트 · 필터 무관)")
     _GS_COLS = ["관리번호", "제목", "작성팀", "제조번호", "품목코드", "기한일", "D-day", "진행상태"]
     _gs_frames = []
     for _gk, _gd in ALL_DFS.items():
