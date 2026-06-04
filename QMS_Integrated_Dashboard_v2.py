@@ -716,9 +716,10 @@ for pk, df_p in ALL_DFS.items():
         continue
     total_all += df_p["관리번호"].nunique() if not df_p.empty and "관리번호" in df_p.columns else len(df_p)
 
-# ─── 상단 고정 필터바 렌더 ───
-_topbar = st.container()
-with _topbar:
+# ─── 상단: 통합검색(상시) + 수집상태·필터(드롭다운) ───
+# 수집 상태·필터 → 드롭다운(expander, 기본 접힘, 라벨 상시 표시). 접혀도 위젯은 실행되어
+# 필터 값(selected_years/status_filter/dday_filter)은 그대로 유지된다.
+with st.expander("⚙️ 수집 상태 · 필터", expanded=False):
     _c_status, _c_yb, _c_year, _c_status_f, _c_dday, _c_actions = st.columns([2.6, 1.5, 1.4, 1.6, 1.7, 1.4])
     with _c_status:
         st.caption("수집 상태")
@@ -749,14 +750,15 @@ with _topbar:
                 if _k.startswith("flt_"):
                     del st.session_state[_k]
             st.rerun()
-    # [통합검색 Task 2.3] 필터바 아래 한 줄 검색 박스. key=flt_search → ↺필터초기화에 자동 포함.
-    st.text_input(
-        "통합검색", key="flt_search", label_visibility="collapsed",
-        placeholder="🔍 통합검색: 관리번호·제목·등록자·제조번호·품목코드 (전 프로젝트 · 필터 무관)",
-    )
 if _failed:
     _shown = ", ".join(_failed[:6]) + (" 외" if len(_failed) > 6 else "")
-    _topbar.warning(f"수집 실패 {len(_failed)}건(옛 캐시로 표시 중): {_shown}")
+    st.warning(f"수집 실패 {len(_failed)}건(옛 캐시로 표시 중): {_shown}")
+# 통합검색 박스(상시 표시) + 결과 컨테이너(박스 바로 아래에 결과를 렌더하기 위한 자리).
+st.text_input(
+    "통합검색", key="flt_search", label_visibility="collapsed",
+    placeholder="🔍 통합검색: 관리번호·제목·등록자·제조번호·품목코드 (전 프로젝트 · 필터 무관)",
+)
+_search_result_box = st.container()   # 결과는 이 컨테이너(검색박스 바로 아래)에 나중에 채운다.
 st.divider()
 
 YEAR_FILTER_COL = "연도_등록" if year_basis == "등록일" else "연도"
@@ -2040,10 +2042,10 @@ def _render_tab(tabkey: str) -> bool:
 #   검색은 레코드 나열(집계 아님) → 관리번호 dedup 표시. 검색어 없으면 패널 미표시.
 # ============================================================================
 _global_q = str(st.session_state.get("flt_search", "") or "").strip()
+# 결과 계산(검색어 있을 때만) — 드롭다운 라벨에 건수를 표기하기 위해 먼저 집계한다.
+_gs_frames = []
 if _global_q:
-    S.section_header(f"🔍 통합검색 결과 — '{_global_q}'  (전 프로젝트 · 필터 무관)")
     _GS_COLS = ["관리번호", "제목", "작성팀", "제조번호", "품목코드", "기한일", "D-day", "진행상태"]
-    _gs_frames = []
     for _gk, _gd in ALL_DFS.items():
         if _gd is None or _gd.empty or "관리번호" not in _gd.columns:
             continue
@@ -2061,26 +2063,34 @@ if _global_q:
             _gf = _hit[[c for c in _GS_COLS if c in _hit.columns]].copy()
             _gf.insert(0, "프로젝트", PROJECT_META[_gk]["label"])
             _gs_frames.append(_gf)
-    if _gs_frames:
+# 검색박스 바로 아래(_search_result_box)에 결과 드롭다운(expander)을 렌더.
+#   라벨 상시 표시 · 검색 시 기본 펼침(expanded=True) · 결과 없거나 미검색 시 접힘+안내.
+with _search_result_box:
+    if not _global_q:
+        with st.expander("🔍 통합검색 결과", expanded=False):
+            st.caption("위 검색창에 입력하면 전 프로젝트(관리번호·제목·등록자·제조번호·품목코드) "
+                       "결과가 여기에 표시됩니다. (필터 무관)")
+    elif _gs_frames:
         import warnings as _gw
         with _gw.catch_warnings():
             _gw.simplefilter("ignore", FutureWarning)
             _gs_res = pd.concat(_gs_frames, ignore_index=True)
         _gs_total = len(_gs_res)
         _gs_show = _gs_res.sort_values("D-day").head(200) if "D-day" in _gs_res.columns else _gs_res.head(200)
-        _cap = f"총 {_gs_total}건 · {len(_gs_frames)}개 프로젝트"
+        _lbl = f"🔍 통합검색 결과 — '{_global_q}' · 총 {_gs_total}건 · {len(_gs_frames)}개 프로젝트"
         if _gs_total > 200:
-            _cap += " (상위 200건 표시)"
-        st.caption(_cap)
-        C.data_table(_gs_show, status=True, height=360)
-        C.linkage_drilldown(
-            _gs_show["관리번호"].astype(str).tolist(), key="global_search",
-            on_select=show_linkage_drawer,
-            caption="검색 결과의 관리번호 선택 → 🔗 로 부모-자식 체인·종결여부 추적",
-        )
+            _lbl += " (상위 200건 표시)"
+        with st.expander(_lbl, expanded=True):
+            st.caption("전 프로젝트 · 필터 무관")
+            C.data_table(_gs_show, status=True, height=360)
+            C.linkage_drilldown(
+                _gs_show["관리번호"].astype(str).tolist(), key="global_search",
+                on_select=show_linkage_drawer,
+                caption="검색 결과의 관리번호 선택 → 🔗 로 부모-자식 체인·종결여부 추적",
+            )
     else:
-        S.empty_state(f"'{_global_q}' 검색 결과가 없습니다.")
-    st.divider()
+        with st.expander(f"🔍 통합검색 결과 — '{_global_q}'", expanded=True):
+            S.empty_state(f"'{_global_q}' 검색 결과가 없습니다.")
 
 
 # ============================================================================
