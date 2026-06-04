@@ -695,6 +695,11 @@ with _topbar:
                 if _k.startswith("flt_"):
                     del st.session_state[_k]
             st.rerun()
+    # [전역 검색 Task 2.3] 필터바 아래 한 줄 검색 박스. key=flt_search → ↺필터초기화에 자동 포함.
+    st.text_input(
+        "전역 검색", key="flt_search", label_visibility="collapsed",
+        placeholder="🔍 전역 검색: 관리번호·제목·등록자·제조번호·품목코드 (전 프로젝트 · 필터 무관)",
+    )
 if _failed:
     _shown = ", ".join(_failed[:6]) + (" 외" if len(_failed) > 6 else "")
     _topbar.warning(f"수집 실패 {len(_failed)}건(옛 캐시로 표시 중): {_shown}")
@@ -1972,6 +1977,56 @@ def _render_tab(tabkey: str) -> bool:
      그래서 'with tab_x:' → 'if _render_tab(\"x\"):' 1줄 치환으로 본문 실행 자체를 가드한다.)
     """
     return tabkey == _active_tabkey
+
+
+# ============================================================================
+# 전역 검색(🔍) 결과 패널 (Task 2.3 보류분) — 검색어가 있을 때만 전 화면 상단에 노출.
+#   전 프로젝트(ALL_DFS) · 필터 무관. 5필드(관리번호·제목·등록자·제조번호·품목코드) OR
+#   매칭은 기존 UIF.apply_search_filters 재사용(신규 매칭 로직 0). 결과 행 🔗 → 드로어.
+#   검색은 레코드 나열(집계 아님) → 관리번호 dedup 표시. 검색어 없으면 패널 미표시.
+# ============================================================================
+_global_q = str(st.session_state.get("flt_search", "") or "").strip()
+if _global_q:
+    S.section_header(f"🔍 전역 검색 결과 — '{_global_q}'  (전 프로젝트 · 필터 무관)")
+    _GS_COLS = ["관리번호", "제목", "작성팀", "제조번호", "품목코드", "기한일", "D-day", "진행상태"]
+    _gs_frames = []
+    for _gk, _gd in ALL_DFS.items():
+        if _gd is None or _gd.empty or "관리번호" not in _gd.columns:
+            continue
+        # 필드별 OR. apply_search_filters 는 컬럼 부재 시 미적용(=전체 반환)이므로,
+        # 해당 컬럼이 있는 필드만 호출해 합집합한다(부재 필드가 전 레코드를 끌어오는 것 방지).
+        _parts = []
+        for _fld, _col in (("qms_no", "관리번호"), ("title", "제목"), ("registrant", "등록자"),
+                           ("lot", "제조번호"), ("item_code", "품목코드")):
+            if _col in _gd.columns:
+                _parts.append(UIF.apply_search_filters(_gd, **{_fld: _global_q}))
+        if not _parts:
+            continue
+        _hit = pd.concat(_parts, ignore_index=True).drop_duplicates(subset=["관리번호"])
+        if not _hit.empty:
+            _gf = _hit[[c for c in _GS_COLS if c in _hit.columns]].copy()
+            _gf.insert(0, "프로젝트", PROJECT_META[_gk]["label"])
+            _gs_frames.append(_gf)
+    if _gs_frames:
+        import warnings as _gw
+        with _gw.catch_warnings():
+            _gw.simplefilter("ignore", FutureWarning)
+            _gs_res = pd.concat(_gs_frames, ignore_index=True)
+        _gs_total = len(_gs_res)
+        _gs_show = _gs_res.sort_values("D-day").head(200) if "D-day" in _gs_res.columns else _gs_res.head(200)
+        _cap = f"총 {_gs_total}건 · {len(_gs_frames)}개 프로젝트"
+        if _gs_total > 200:
+            _cap += " (상위 200건 표시)"
+        st.caption(_cap)
+        C.data_table(_gs_show, status=True, height=360)
+        C.linkage_drilldown(
+            _gs_show["관리번호"].astype(str).tolist(), key="global_search",
+            on_select=show_linkage_drawer,
+            caption="검색 결과의 관리번호 선택 → 🔗 로 부모-자식 체인·종결여부 추적",
+        )
+    else:
+        S.empty_state(f"'{_global_q}' 검색 결과가 없습니다.")
+    st.divider()
 
 
 # ============================================================================
