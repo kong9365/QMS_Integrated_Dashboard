@@ -9,7 +9,7 @@ QMS 통합 모니터링 대시보드 v2.0 (Streamlit + Plotly)
   streamlit run QMS_Integrated_Dashboard_v2.py
   → .streamlit/config.toml 에서 address=0.0.0.0 로 같은 네트워크 PC가 브라우저로 접속 가능.
 """
-import sys, os, io, json, re, time, asyncio, logging, subprocess
+import sys, os, io, json, re, time, asyncio, logging, subprocess, base64
 from collections import defaultdict
 from datetime import datetime, date, timedelta
 
@@ -152,9 +152,10 @@ def _install_ws_noise_filter() -> None:
 # 페이지 설정
 # ============================================================================
 
+_BRAND_LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CI", "logo1.png")
 st.set_page_config(
-    page_title="QMS 통합 모니터링 v2.0",
-    page_icon="▦",
+    page_title="KD-MoaQ",
+    page_icon=_BRAND_LOGO_PATH if os.path.exists(_BRAND_LOGO_PATH) else "▦",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -487,7 +488,19 @@ def fetch_investigation_data():
 # 사이드바 — 데이터 로드 & 필터
 # ============================================================================
 
-st.sidebar.title("▦ QMS 통합 v2.0")
+# 사이드바 브랜드: 회사 로고(CI/logo1.png) + KD-MoaQ. (▦ 이모지 → 광동제약 로고 교체)
+try:
+    with open(_BRAND_LOGO_PATH, "rb") as _lf:
+        _brand_b64 = base64.b64encode(_lf.read()).decode("ascii")
+    st.sidebar.markdown(
+        f'<div style="display:flex;align-items:center;gap:10px;margin:2px 0 4px 2px">'
+        f'<img src="data:image/png;base64,{_brand_b64}" alt="광동제약" style="height:34px;width:auto"/>'
+        f'<span style="font-size:1.5rem;font-weight:800;color:#16244F;letter-spacing:-0.3px">KD-MoaQ</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+except Exception:
+    st.sidebar.title("KD-MoaQ")
 st.sidebar.divider()
 
 # 단일 사이드바 토글(iframe): 사이드바 DOM 생성 이후 주입 — 초기 로드 시 body 전역 관찰로 브라우저 멈춤 방지
