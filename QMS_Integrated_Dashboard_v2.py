@@ -3002,27 +3002,102 @@ if _render_tab("workflow"):
         ldf = pd.DataFrame(link_data)
         st.dataframe(ldf, use_container_width=True, hide_index=True)
 
-        # Sankey-like 시각화
-        S.section_header("품질이슈 → 후속조치 흐름")
-        oos_total = foos["관리번호"].nunique() if not foos.empty and "관리번호" in foos.columns else 0
-        dev_total = fdev["관리번호"].nunique() if not fdev.empty and "관리번호" in fdev.columns else 0
-        inv_cnt = finv["관리번호"].nunique() if not finv.empty and "관리번호" in finv.columns else 0
-        capa_cnt = fcapa["관리번호"].nunique() if not fcapa.empty and "관리번호" in fcapa.columns else 0
-        cai_cnt = fcapaai["관리번호"].nunique() if not fcapaai.empty and "관리번호" in fcapaai.columns else 0
+        # ── 품질이슈 → 후속조치 흐름 (2단계 단방향 Sankey, 실제 상위번호 연계 기반) ──
+        #   흐름 값은 qms_flow.compute_quality_flow 로 산출(이슈 1건=1버킷 분할 → 양변 균형,
+        #   건수기여도 가중). 수집/연계/가중 로직 불변(읽기만). CAPA 중간노드 폐지 → 우측 1열.
+        import qms_flow as QF
+        _qflows, _qdrill, _qtot = QF.compute_quality_flow(foos, fdev, finv, fcapa, fcapaai)
+        _qfl = {k: int(round(v)) for k, v in _qflows.items()}   # 정수화 — 라벨·헤더·카드·교차표 수치 일치
+        _issue_total = sum(_qfl.values())
+        if _issue_total > 0:
+            S.section_header("품질이슈 → 후속조치 흐름")
+            _ISSUE_COLOR = {"OOS": "#16244F", "일탈": "#6B79A6"}
+            _ACT_COLOR = {"종결·조치불요": "#1F9D63", "조사": "#2F6FED", "CAPA": "#0E9AA7", "CAPA AI": "#7A5AF0"}
+            _RIGHT = ["종결·조치불요", "조사", "CAPA", "CAPA AI"]
+            _bsum = lambda b: sum(v for (lab, bb), v in _qfl.items() if bb == b)
+            _isum = lambda lab: sum(_qfl.get((lab, b), 0) for b in _RIGHT)
+            _closed = _bsum("종결·조치불요")
+            _inv, _capa, _cai = _bsum("조사"), _bsum("CAPA"), _bsum("CAPA AI")
+            _act_started = _issue_total - _closed
 
-        fig_sk = go.Figure(go.Sankey(
-            node=dict(pad=15, thickness=20,
-                      label=[f"OOS ({oos_total})", f"일탈 ({dev_total})", f"조사 ({inv_cnt})", f"CAPA ({capa_cnt})", f"CAPA AI ({cai_cnt})"],
-                      color=CHART_SEQUENCE[:5]),   # 토큰 시퀀스(네이비→블루→틸) — 혼용색 폐지
-            link=dict(
-                source=[0, 1, 0, 1, 3],
-                target=[2, 2, 3, 3, 4],
-                value=[max(inv_cnt // 2, 1), max(inv_cnt // 2, 1), max(capa_cnt // 2, 1), max(capa_cnt // 2, 1), max(cai_cnt, 1)],
-                color=["rgba(229,57,53,0.3)", "rgba(251,140,0,0.3)", "rgba(229,57,53,0.2)", "rgba(251,140,0,0.2)", "rgba(142,36,170,0.3)"],
-            ),
-        ))
-        fig_sk.update_layout(height=350, margin=dict(l=10, r=10, t=10, b=10), font=dict(size=12))
-        st.plotly_chart(fig_sk, use_container_width=True)
+            # 단계 헤더 2개
+            _h1, _h2 = st.columns(2)
+            _h1.markdown(f"**STAGE 1 · 품질이슈 발생**  ·  총 **{_issue_total:,}**건")
+            _h2.markdown(f"**STAGE 2 · 후속조치 분기**  ·  조치 착수 **{safe_pct(_act_started, _issue_total):.0f}%** · {_act_started:,}건")
+            # 후속조치 4색 범례
+            st.markdown(
+                "".join(
+                    f'<span style="display:inline-block;margin-right:16px;font-size:0.82rem;color:#334">'
+                    f'<span style="display:inline-block;width:11px;height:11px;border-radius:3px;'
+                    f'background:{_ACT_COLOR[b]};margin-right:5px;vertical-align:middle"></span>{b}</span>'
+                    for b in _RIGHT
+                ),
+                unsafe_allow_html=True,
+            )
+            # 뷰 토글: 흐름도 / 교차표
+            _qview = st.radio("뷰", ["흐름도", "교차표"], horizontal=True,
+                              label_visibility="collapsed", key="qflow_view")
+
+            if _qview == "교차표":
+                C.data_table(QF.crosstab_quality_flow(foos, fdev, finv, fcapa, fcapaai), height=170)
+            else:
+                _left = [l for l in ["OOS", "일탈"] if _isum(l) > 0]
+                _nodes = _left + _RIGHT
+                _idx = {n: i for i, n in enumerate(_nodes)}
+                _node_color = [_ISSUE_COLOR[n] for n in _left] + [_ACT_COLOR[n] for n in _RIGHT]
+                _node_val = lambda n: _isum(n) if n in _left else _bsum(n)
+                _node_lab = [f"{n}<br>{_node_val(n):,}건 · {safe_pct(_node_val(n), _issue_total):.0f}%" for n in _nodes]
+                _node_x = [0.001] * len(_left) + [0.999] * len(_RIGHT)
+
+                def _rgba(hexc, a):
+                    h = hexc.lstrip("#")
+                    return f"rgba({int(h[0:2],16)},{int(h[2:4],16)},{int(h[4:6],16)},{a})"
+
+                _src, _tgt, _val, _lcol, _lcustom = [], [], [], [], []
+                for lab in _left:
+                    for b in _RIGHT:
+                        v = _qfl.get((lab, b), 0)
+                        if v <= 0:
+                            continue
+                        _src.append(_idx[lab]); _tgt.append(_idx[b]); _val.append(v)
+                        _lcol.append(_rgba(_ACT_COLOR[b], 0.42))
+                        _lcustom.append(f"{lab} → {b} · {v:,}건 ({safe_pct(v, _isum(lab)):.1f}% of {lab})")
+                _sk = go.Figure(go.Sankey(
+                    arrangement="snap",
+                    node=dict(pad=26, thickness=22, label=_node_lab, color=_node_color, x=_node_x,
+                              line=dict(color="rgba(255,255,255,0.55)", width=0.6),
+                              hovertemplate="%{label}<extra></extra>"),
+                    link=dict(source=_src, target=_tgt, value=_val, color=_lcol,
+                              customdata=_lcustom, hovertemplate="%{customdata}<extra></extra>"),
+                ))
+                _sk.update_layout(height=390, margin=dict(l=10, r=10, t=10, b=10),
+                                  font=dict(family="Pretendard, 'Malgun Gothic', 'NanumGothic', sans-serif",
+                                            size=14, color="#0E1B3D"))
+                st.plotly_chart(_sk, use_container_width=True, config={"displayModeBar": False})
+
+            # 전환율 카드 4개 (safe_pct)
+            _qc = st.columns(4)
+            with _qc[0]:
+                C.signal_card("조치불요 종결률", f"{safe_pct(_closed, _issue_total):.0f}% · {_closed:,}건", tone="info")
+            with _qc[1]:
+                C.signal_card("조사 착수율", f"{safe_pct(_inv, _issue_total):.0f}% · {_inv:,}건", tone="info")
+            with _qc[2]:
+                C.signal_card("CAPA 연계율", f"{safe_pct(_capa + _cai, _issue_total):.0f}% · {_capa + _cai:,}건", tone="info")
+            with _qc[3]:
+                C.signal_card("AI 보조 비율", f"{safe_pct(_cai, max(_capa + _cai, 1)):.0f}% · {_cai:,}건", tone="info")
+
+            # 드릴다운: 흐름 선택 → 관리번호 목록 + 🔗 연계 보기(기존 드로어 재사용)
+            _opts = [f"{lab} → {b}" for (lab, b) in sorted(_qdrill.keys()) if _qdrill.get((lab, b))]
+            if _opts:
+                with st.expander("🔗 흐름 드릴다운 — 관리번호 목록 (선택 → 연계 추적)"):
+                    _sel = st.selectbox("흐름 선택", _opts, key="qflow_drill")
+                    _lab, _b = _sel.split(" → ")
+                    _ids_list = [str(x) for x in _qdrill.get((_lab, _b), [])]
+                    st.caption(f"{_sel} · {len(_ids_list):,}건")
+                    C.linkage_drilldown(_ids_list, key="qflow_link", on_select=show_linkage_drawer,
+                                        caption="관리번호 선택 → 🔗 로 부모-자식 체인 추적")
+        else:
+            st.info("흐름을 그릴 이슈 데이터가 없습니다.")
     else:
         st.info("연계 분석에 필요한 데이터가 없습니다.")
 
