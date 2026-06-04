@@ -3707,11 +3707,18 @@ if _render_tab("alerts_new"):
     # ① 기한 위험 모니터링 (전 프로젝트 D-day 재사용 — 신규 로직 0, 건수기여도 합)
     # ════════════════════════════════════════════════════════════════════
     S.section_header("기한 위험 모니터링 (전 프로젝트)", "①")
-    _over_w = round(sum(weighted_metric_overdue(_d) for _d in F.values()))
+    # [버그수정] 완료(종결) 항목 제외 — 상태 Pill과 동일한 derive_status('완료' 최우선) 재사용.
+    #   D-day 만 보면 이미 종결된 과거 건이 '기한 초과'로 잡혀 카운트·표(D-day 오름차순)를 점령한다.
+    #   각 프로젝트 df 를 미완료(_F_open)로 먼저 거른 뒤 카운트·표를 산출(신규 로직 0, 기존 완료판정 재사용).
+    _F_open = {
+        _pk: (_d[C.derive_status(_d) != "완료"] if (_d is not None and not _d.empty) else _d)
+        for _pk, _d in F.items()
+    }
+    _over_w = round(sum(weighted_metric_overdue(_d) for _d in _F_open.values()))
 
     def _wcount_dday(_lo, _hi) -> int:
         _t = 0
-        for _d in F.values():
+        for _d in _F_open.values():
             if _d is None or _d.empty or "D-day" not in _d.columns:
                 continue
             _dd = _num_series(_d["D-day"], default=99999)
@@ -3729,11 +3736,11 @@ if _render_tab("alerts_new"):
         C.signal_card("D-7 임박", f"{_imm7:,}건", tone="warn", icon="", sub="0 ≤ D-day ≤ 7")
 
     _risk_frames = []
-    for _pk, _d in F.items():
+    for _pk, _d in _F_open.items():   # [버그수정] 미완료(_F_open)에서만 추출 → 표에 '완료' 행 미노출
         if _d is None or _d.empty or "D-day" not in _d.columns:
             continue
         _dd = _num_series(_d["D-day"], default=99999)
-        _sub = _d[_dd <= 7]   # 초과 + 7일 이내 임박
+        _sub = _d[_dd <= 7]   # 초과 + 7일 이내 임박(완료 제외)
         if not _sub.empty:
             _keep = [c for c in ["관리번호", "제목", "작성팀", "기한일", "D-day", "진행상태"] if c in _sub.columns]
             _f = _sub[_keep].copy()
