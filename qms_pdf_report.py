@@ -27,8 +27,8 @@ def generate_report(
     kpi_data: dict[str, Any],
     overdue_items: list[dict],
     project_summary: list[dict],
-    company: str = "광동제약 품질관리부문",
-    title: str = "QMS 통합 모니터링 보고서",
+    company: str = "광동제약 품질부문",
+    title: str = "KD-MoaQ 모니터링 보고서",
 ) -> bytes | None:
     """
     KPI 요약 + 기한 초과 목록 PDF 보고서 생성.

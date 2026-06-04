@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-QMS 통합 모니터링 대시보드 v2.0 (Streamlit + Plotly)
+KD-MoaQ — QMS 통합 모니터링 대시보드 (Streamlit + Plotly)
 - 16개 프로젝트 통합 관리 (교육 제외)
 - 탭1: 경영진 대시보드  탭2: 품질이상  탭3: CAPA관리  탭4: 변경관리
 - 탭5: 고객불만  탭6: 워크플로우연계  탭7: 기한관리  탭8: 원본데이터  탭9: 설정
@@ -9,7 +9,7 @@ QMS 통합 모니터링 대시보드 v2.0 (Streamlit + Plotly)
   streamlit run QMS_Integrated_Dashboard_v2.py
   → .streamlit/config.toml 에서 address=0.0.0.0 로 같은 네트워크 PC가 브라우저로 접속 가능.
 """
-import sys, os, io, json, re, time, asyncio, logging, subprocess
+import sys, os, io, json, re, time, asyncio, logging, subprocess, base64
 from collections import defaultdict
 from datetime import datetime, date, timedelta
 
@@ -152,9 +152,10 @@ def _install_ws_noise_filter() -> None:
 # 페이지 설정
 # ============================================================================
 
+_BRAND_LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CI", "logo1.png")
 st.set_page_config(
-    page_title="QMS 통합 모니터링 v2.0",
-    page_icon="▦",
+    page_title="KD-MoaQ",
+    page_icon=_BRAND_LOGO_PATH if os.path.exists(_BRAND_LOGO_PATH) else "▦",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -487,11 +488,59 @@ def fetch_investigation_data():
 # 사이드바 — 데이터 로드 & 필터
 # ============================================================================
 
-st.sidebar.title("▦ QMS 통합 v2.0")
+# 사이드바 브랜드: 회사 로고(CI/logo1.png) + KD-MoaQ. (▦ 이모지 → 광동제약 로고 교체)
+try:
+    with open(_BRAND_LOGO_PATH, "rb") as _lf:
+        _logo_raw = _lf.read()
+    # 투명 여백 크롭(콘텐츠 141x34 / 캔버스 150x100 — 위아래 여백 제거)으로 floaty 공백 제거 +
+    # 글씨(KD-MoaQ)와 크기 정합. PIL 없으면 원본 그대로(graceful).
+    try:
+        from PIL import Image as _PILImage
+        _im = _PILImage.open(io.BytesIO(_logo_raw)).convert("RGBA")
+        _bb = _im.getbbox()
+        if _bb:
+            _im = _im.crop(_bb)
+        _bufp = io.BytesIO()
+        _im.save(_bufp, format="PNG")
+        _brand_b64 = base64.b64encode(_bufp.getvalue()).decode("ascii")
+    except Exception:
+        _brand_b64 = base64.b64encode(_logo_raw).decode("ascii")
+    st.sidebar.markdown(
+        f'<div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:5px;margin:8px 0 10px 0">'
+        f'<img src="data:image/png;base64,{_brand_b64}" alt="광동제약" style="width:130px;height:auto"/>'
+        f'<span style="font-size:1.9rem;font-weight:800;color:#E83008;letter-spacing:-0.5px;line-height:1.05">KD-MoaQ</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+except Exception:
+    st.sidebar.title("KD-MoaQ")
 st.sidebar.divider()
 
 # 단일 사이드바 토글(iframe): 사이드바 DOM 생성 이후 주입 — 초기 로드 시 body 전역 관찰로 브라우저 멈춤 방지
 S.inject_sidebar_toggle()
+
+def _load_dotenv_env() -> dict:
+    """레포 루트 ``.env``(KEY=VALUE · # 주석/빈줄 무시)를 dict 로 읽어 반환(없으면 {}).
+
+    refresh_job 은 QMS 자격증명(QMS_API_BASE_URL/QMS_LOGIN_* 등)이 필요하지만, 코드가 .env 를
+    자동 로드하지 않으므로 앱이 .env 없이 떠 있으면 백그라운드 갱신이 빈 base_url 로 **로그인 실패**한다
+    (진단: 'No scheme supplied'). 이 함수로 .env 를 읽어 subprocess 환경에 주입한다
+    (deploy/run_refresh.bat 와 동일 취지). 비밀값은 로깅/출력하지 않는다.
+    """
+    env: dict[str, str] = {}
+    _envp = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    try:
+        with open(_envp, "r", encoding="utf-8") as _f:
+            for _line in _f:
+                _s = _line.strip()
+                if not _s or _s.startswith("#") or "=" not in _s:
+                    continue
+                _k, _v = _s.split("=", 1)
+                env[_k.strip()] = _v.strip()
+    except Exception:
+        pass
+    return env
+
 
 def _trigger_refresh_job_background() -> bool:
     """refresh_job 을 백그라운드 subprocess 로 실행(동기 80s 블로킹 금지, Task 1.3).
@@ -499,12 +548,17 @@ def _trigger_refresh_job_background() -> bool:
     캐시를 지우지 않는다(지우면 cache_only 앱이 빈 화면이 됨). 수집이 끝나면
     refresh_job 이 캐시를 원자적으로 교체하고, 다음 새로고침 때 새 데이터가 보인다.
     성공적으로 '시작'했으면 True. (완료를 기다리지 않음)
+
+    [수정] .env 자격증명을 subprocess 환경에 주입한다 — 앱을 .env 없이 `streamlit run` 으로
+    띄워도 백그라운드 갱신이 로그인에 성공하고, 실패 수집이 _meta.json 을 덮어쓰는 일이 없도록 한다.
     """
     try:
+        _sub_env = {**os.environ, **_load_dotenv_env()}
         subprocess.Popen(
             [sys.executable, "-m", "qms_pro.jobs.refresh_job"],
             cwd=os.path.dirname(os.path.abspath(__file__)),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=_sub_env,
         )
         return True
     except Exception:
@@ -662,9 +716,10 @@ for pk, df_p in ALL_DFS.items():
         continue
     total_all += df_p["관리번호"].nunique() if not df_p.empty and "관리번호" in df_p.columns else len(df_p)
 
-# ─── 상단 고정 필터바 렌더 ───
-_topbar = st.container()
-with _topbar:
+# ─── 상단: 통합검색(상시) + 수집상태·필터(드롭다운) ───
+# 수집 상태·필터 → 드롭다운(expander, 기본 접힘, 라벨 상시 표시). 접혀도 위젯은 실행되어
+# 필터 값(selected_years/status_filter/dday_filter)은 그대로 유지된다.
+with st.expander("⚙️ 수집 상태 · 필터", expanded=False):
     _c_status, _c_yb, _c_year, _c_status_f, _c_dday, _c_actions = st.columns([2.6, 1.5, 1.4, 1.6, 1.7, 1.4])
     with _c_status:
         st.caption("수집 상태")
@@ -697,7 +752,13 @@ with _topbar:
             st.rerun()
 if _failed:
     _shown = ", ".join(_failed[:6]) + (" 외" if len(_failed) > 6 else "")
-    _topbar.warning(f"수집 실패 {len(_failed)}건(옛 캐시로 표시 중): {_shown}")
+    st.warning(f"수집 실패 {len(_failed)}건(옛 캐시로 표시 중): {_shown}")
+# 통합검색 박스(상시 표시) + 결과 컨테이너(박스 바로 아래에 결과를 렌더하기 위한 자리).
+st.text_input(
+    "통합검색", key="flt_search", label_visibility="collapsed",
+    placeholder="🔍 통합검색: 관리번호·제목·등록자·제조번호·품목코드 (전 프로젝트 · 필터 무관)",
+)
+_search_result_box = st.container()   # 결과는 이 컨테이너(검색박스 바로 아래)에 나중에 채운다.
 st.divider()
 
 YEAR_FILTER_COL = "연도_등록" if year_basis == "등록일" else "연도"
@@ -1972,6 +2033,64 @@ def _render_tab(tabkey: str) -> bool:
      그래서 'with tab_x:' → 'if _render_tab(\"x\"):' 1줄 치환으로 본문 실행 자체를 가드한다.)
     """
     return tabkey == _active_tabkey
+
+
+# ============================================================================
+# 통합검색(🔍) 결과 패널 (Task 2.3 보류분) — 검색어가 있을 때만 전 화면 상단에 노출.
+#   전 프로젝트(ALL_DFS) · 필터 무관. 5필드(관리번호·제목·등록자·제조번호·품목코드) OR
+#   매칭은 기존 UIF.apply_search_filters 재사용(신규 매칭 로직 0). 결과 행 🔗 → 드로어.
+#   검색은 레코드 나열(집계 아님) → 관리번호 dedup 표시. 검색어 없으면 패널 미표시.
+# ============================================================================
+_global_q = str(st.session_state.get("flt_search", "") or "").strip()
+# 결과 계산(검색어 있을 때만) — 드롭다운 라벨에 건수를 표기하기 위해 먼저 집계한다.
+_gs_frames = []
+if _global_q:
+    _GS_COLS = ["관리번호", "제목", "작성팀", "제조번호", "품목코드", "기한일", "D-day", "진행상태"]
+    for _gk, _gd in ALL_DFS.items():
+        if _gd is None or _gd.empty or "관리번호" not in _gd.columns:
+            continue
+        # 필드별 OR. apply_search_filters 는 컬럼 부재 시 미적용(=전체 반환)이므로,
+        # 해당 컬럼이 있는 필드만 호출해 합집합한다(부재 필드가 전 레코드를 끌어오는 것 방지).
+        _parts = []
+        for _fld, _col in (("qms_no", "관리번호"), ("title", "제목"), ("registrant", "등록자"),
+                           ("lot", "제조번호"), ("item_code", "품목코드")):
+            if _col in _gd.columns:
+                _parts.append(UIF.apply_search_filters(_gd, **{_fld: _global_q}))
+        if not _parts:
+            continue
+        _hit = pd.concat(_parts, ignore_index=True).drop_duplicates(subset=["관리번호"])
+        if not _hit.empty:
+            _gf = _hit[[c for c in _GS_COLS if c in _hit.columns]].copy()
+            _gf.insert(0, "프로젝트", PROJECT_META[_gk]["label"])
+            _gs_frames.append(_gf)
+# 검색박스 바로 아래(_search_result_box)에 결과 드롭다운(expander)을 렌더.
+#   라벨 상시 표시 · 검색 시 기본 펼침(expanded=True) · 결과 없거나 미검색 시 접힘+안내.
+with _search_result_box:
+    if not _global_q:
+        with st.expander("🔍 통합검색 결과", expanded=False):
+            st.caption("위 검색창에 입력하면 전 프로젝트(관리번호·제목·등록자·제조번호·품목코드) "
+                       "결과가 여기에 표시됩니다. (필터 무관)")
+    elif _gs_frames:
+        import warnings as _gw
+        with _gw.catch_warnings():
+            _gw.simplefilter("ignore", FutureWarning)
+            _gs_res = pd.concat(_gs_frames, ignore_index=True)
+        _gs_total = len(_gs_res)
+        _gs_show = _gs_res.sort_values("D-day").head(200) if "D-day" in _gs_res.columns else _gs_res.head(200)
+        _lbl = f"🔍 통합검색 결과 — '{_global_q}' · 총 {_gs_total}건 · {len(_gs_frames)}개 프로젝트"
+        if _gs_total > 200:
+            _lbl += " (상위 200건 표시)"
+        with st.expander(_lbl, expanded=True):
+            st.caption("전 프로젝트 · 필터 무관")
+            C.data_table(_gs_show, status=True, height=360)
+            C.linkage_drilldown(
+                _gs_show["관리번호"].astype(str).tolist(), key="global_search",
+                on_select=show_linkage_drawer,
+                caption="검색 결과의 관리번호 선택 → 🔗 로 부모-자식 체인·종결여부 추적",
+            )
+    else:
+        with st.expander(f"🔍 통합검색 결과 — '{_global_q}'", expanded=True):
+            S.empty_state(f"'{_global_q}' 검색 결과가 없습니다.")
 
 
 # ============================================================================
