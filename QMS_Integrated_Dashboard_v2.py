@@ -2286,6 +2286,27 @@ if _render_tab("oos"):
             CHART_COLORS, safe_pct, COMPLETED_KEYWORDS,
         )
     with o_tab3:
+        # 📄 Word(.docx) 보고서 — 아래 경향분석보고서 내용을 표 기반 Word 문서로 생성(현재 필터 반영).
+        #   신규 순수모듈 qms_word_report 사용. render_oos_report(표시)·도메인 로직 불변.
+        try:
+            import qms_word_report as _wr
+            _docx_bytes = _wr.build_oos_trend_report_docx(
+                foos, safe_pct, COMPLETED_KEYWORDS,
+                as_of=datetime.now().strftime("%Y-%m-%d %H:%M"),
+                project_label="OOS (Out of Specification)",
+                filter_note=f"연도 {selected_years} · 진행상태 {status_filter} · 기한 {dday_filter}",
+            )
+            _wc1, _wc2 = st.columns([3, 1])
+            _wc1.caption("아래 경향분석보고서를 Word(.docx) 문서로 내려받습니다 — 현재 필터 기준.")
+            _wc2.download_button(
+                "📄 Word 보고서", data=_docx_bytes,
+                file_name=f"OOS_경향분석보고서_{datetime.now():%Y%m%d}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True, key="oos_trend_word_dl",
+            )
+            st.divider()
+        except Exception as _wr_e:
+            st.warning(f"Word 보고서 생성 실패: {_wr_e}")
         oos_panels.render_oos_report(foos, CHART_COLORS, safe_pct, COMPLETED_KEYWORDS)
     with o_tab4:
         oos_panels.render_oos_gmp(
