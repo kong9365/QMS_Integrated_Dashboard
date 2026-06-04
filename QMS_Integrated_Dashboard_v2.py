@@ -2309,6 +2309,28 @@ if _render_tab("oos"):
             st.warning(f"Word 보고서 생성 실패: {_wr_e}")
         oos_panels.render_oos_report(foos, CHART_COLORS, safe_pct, COMPLETED_KEYWORDS)
     with o_tab4:
+        # 📊 PPT(.pptx) 보고서 — 마감회의 & GMP 내용을 PowerPoint로 생성(현재 필터 반영).
+        #   신규 순수모듈 qms_ppt_report 사용. 아래 render_oos_gmp(표시 레이아웃)·도메인 로직 불변,
+        #   다운로드 버튼만 상단에 추가하며 보고서 표/차트는 PPT 네이티브 요소로 그대로 재현한다.
+        try:
+            import qms_ppt_report as _pr
+            _pptx_bytes = _pr.build_oos_gmp_report_pptx(
+                foos, oos_ny, primary_year, prev_year, ycol, mc_oos, safe_pct, COMPLETED_KEYWORDS,
+                as_of=datetime.now().strftime("%Y-%m-%d %H:%M"),
+                project_label="OOS (Out of Specification)",
+                filter_note=f"연도 {selected_years} · 진행상태 {status_filter} · 기한 {dday_filter}",
+            )
+            _pc1, _pc2 = st.columns([3, 1])
+            _pc1.caption("마감회의 & GMP 보고서를 PowerPoint(.pptx)로 내려받습니다 — 현재 필터 기준 (표·차트 재현).")
+            _pc2.download_button(
+                "📊 PPT 보고서", data=_pptx_bytes,
+                file_name=f"OOS_마감회의_GMP_{datetime.now():%Y%m%d}.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                use_container_width=True, key="oos_gmp_ppt_dl",
+            )
+            st.divider()
+        except Exception as _pr_e:
+            st.warning(f"PPT 보고서 생성 실패: {_pr_e}")
         oos_panels.render_oos_gmp(
             foos, oos_ny, primary_year, prev_year, ycol, mc_oos, CHART_COLORS, safe_pct, COMPLETED_KEYWORDS,
         )
