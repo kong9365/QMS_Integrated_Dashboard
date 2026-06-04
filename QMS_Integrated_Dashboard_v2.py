@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-QMS 통합 모니터링 대시보드 v2.0 (Streamlit + Plotly)
+KD-MoaQ — QMS 통합 모니터링 대시보드 (Streamlit + Plotly)
 - 16개 프로젝트 통합 관리 (교육 제외)
 - 탭1: 경영진 대시보드  탭2: 품질이상  탭3: CAPA관리  탭4: 변경관리
 - 탭5: 고객불만  탭6: 워크플로우연계  탭7: 기한관리  탭8: 원본데이터  탭9: 설정
@@ -493,9 +493,9 @@ try:
     with open(_BRAND_LOGO_PATH, "rb") as _lf:
         _brand_b64 = base64.b64encode(_lf.read()).decode("ascii")
     st.sidebar.markdown(
-        f'<div style="display:flex;align-items:center;gap:10px;margin:2px 0 4px 2px">'
-        f'<img src="data:image/png;base64,{_brand_b64}" alt="광동제약" style="height:34px;width:auto"/>'
-        f'<span style="font-size:1.5rem;font-weight:800;color:#16244F;letter-spacing:-0.3px">KD-MoaQ</span>'
+        f'<div style="display:flex;flex-direction:column;align-items:flex-start;gap:3px;margin:6px 0 8px 2px">'
+        f'<img src="data:image/png;base64,{_brand_b64}" alt="광동제약" style="height:54px;width:auto"/>'
+        f'<span style="font-size:1.9rem;font-weight:800;color:#E83008;letter-spacing:-0.5px;line-height:1.05">KD-MoaQ</span>'
         f'</div>',
         unsafe_allow_html=True,
     )

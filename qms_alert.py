@@ -141,7 +141,7 @@ def _build_email_html(overdue_items: list[dict]) -> str:
     <html><body style="font-family:sans-serif;color:#212121">
     <div style="background:#0d1b3e;color:#fff;padding:16px 24px;border-radius:8px 8px 0 0">
         <h2 style="margin:0;font-size:1.1rem">🚨 QMS 기한 초과 알림</h2>
-        <p style="margin:4px 0 0;font-size:0.85rem;opacity:0.8">{now_str} | 광동제약 품질관리부문</p>
+        <p style="margin:4px 0 0;font-size:0.85rem;opacity:0.8">{now_str} | 광동제약 품질부문</p>
     </div>
     <div style="padding:16px 0">
         <p>총 <b>{len(overdue_items)}건</b>의 기한 초과 항목이 있습니다.</p>
@@ -159,7 +159,7 @@ def _build_email_html(overdue_items: list[dict]) -> str:
         {"<p style='color:#888;font-size:0.8rem'>상위 50건 표시</p>" if len(overdue_items) > 50 else ""}
     </div>
     <div style="background:#f3f4f8;padding:10px 24px;font-size:0.77rem;color:#666;border-radius:0 0 8px 8px">
-        QMS 통합 모니터링 대시보드 v2.0 | 광동제약 품질관리부문
+        KD-MoaQ | 광동제약 품질부문
     </div>
     </body></html>"""
 

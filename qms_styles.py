@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-QMS 통합 대시보드 — 디자인 시스템 (단일 출처)
+KD-MoaQ (QMS 통합 대시보드) — 디자인 시스템 (단일 출처)
 
 import qms_styles as S
 S.apply_global_css()          # 앱 시작 시 1회 호출
@@ -322,7 +322,7 @@ def section_header(text: str, icon: str = "") -> None:
 def render_header(title: str, subtitle: str = "") -> None:
     """페이지 상단 그라디언트 헤더."""
     from datetime import datetime
-    sub = subtitle or f"기준일: {datetime.now().strftime('%Y-%m-%d %H:%M')} | 광동제약 품질관리부문"
+    sub = subtitle or f"기준일: {datetime.now().strftime('%Y-%m-%d %H:%M')} | 광동제약 품질부문"
     st.markdown(f"""
     <div class="qms-header">
         <h1>▦ {title}</h1>
@@ -334,7 +334,7 @@ def render_header(title: str, subtitle: str = "") -> None:
 def render_footer() -> None:
     from datetime import datetime
     st.markdown(
-        f'<div class="qms-footer">© {datetime.now().year} 광동제약 품질관리부문 | QMS 통합 모니터링 대시보드 v2.0</div>',
+        f'<div class="qms-footer">© {datetime.now().year} 광동제약 품질부문 | KD-MoaQ</div>',
         unsafe_allow_html=True,
     )
 
