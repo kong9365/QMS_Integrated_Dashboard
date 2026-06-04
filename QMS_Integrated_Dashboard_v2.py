@@ -491,10 +491,23 @@ def fetch_investigation_data():
 # 사이드바 브랜드: 회사 로고(CI/logo1.png) + KD-MoaQ. (▦ 이모지 → 광동제약 로고 교체)
 try:
     with open(_BRAND_LOGO_PATH, "rb") as _lf:
-        _brand_b64 = base64.b64encode(_lf.read()).decode("ascii")
+        _logo_raw = _lf.read()
+    # 투명 여백 크롭(콘텐츠 141x34 / 캔버스 150x100 — 위아래 여백 제거)으로 floaty 공백 제거 +
+    # 글씨(KD-MoaQ)와 크기 정합. PIL 없으면 원본 그대로(graceful).
+    try:
+        from PIL import Image as _PILImage
+        _im = _PILImage.open(io.BytesIO(_logo_raw)).convert("RGBA")
+        _bb = _im.getbbox()
+        if _bb:
+            _im = _im.crop(_bb)
+        _bufp = io.BytesIO()
+        _im.save(_bufp, format="PNG")
+        _brand_b64 = base64.b64encode(_bufp.getvalue()).decode("ascii")
+    except Exception:
+        _brand_b64 = base64.b64encode(_logo_raw).decode("ascii")
     st.sidebar.markdown(
-        f'<div style="display:flex;flex-direction:column;align-items:flex-start;gap:3px;margin:6px 0 8px 2px">'
-        f'<img src="data:image/png;base64,{_brand_b64}" alt="광동제약" style="height:54px;width:auto"/>'
+        f'<div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:5px;margin:8px 0 10px 0">'
+        f'<img src="data:image/png;base64,{_brand_b64}" alt="광동제약" style="width:130px;height:auto"/>'
         f'<span style="font-size:1.9rem;font-weight:800;color:#E83008;letter-spacing:-0.5px;line-height:1.05">KD-MoaQ</span>'
         f'</div>',
         unsafe_allow_html=True,
