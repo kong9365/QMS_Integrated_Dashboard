@@ -2209,8 +2209,9 @@ if _render_tab("exec"):
         for pk, df_p in F.items():
             if df_p.empty or "D-day" not in df_p.columns:
                 continue
-            _dn = _num_series(df_p["D-day"], default=0.0)
-            _over = df_p[_dn < 0].copy()
+            _dfa = df_p[active_mask(df_p)]   # [기한 위험 통일] 완료·취소 제외(살아있는 조치대상만)
+            _dn = _num_series(_dfa["D-day"], default=0.0)
+            _over = _dfa[_dn < 0].copy()
             if not _over.empty:
                 _over["프로젝트"] = PROJECT_META[pk]["label"]
                 _ov_frames.append(_over)
@@ -2410,7 +2411,7 @@ if _render_tab("inv"):
         else:
             t_i = weighted_metric_total(finv)
             d_i = weighted_metric_completed(finv)
-            o_i = weighted_metric_overdue(finv)
+            o_i = weighted_metric_overdue(finv[active_mask(finv)])   # [기한 위험 통일] 완료·취소 제외
             base_u = finv.drop_duplicates(subset=["관리번호"]) if "관리번호" in finv.columns else finv
             chain_rate = safe_pct(
                 (base_u.get("최종 종결 여부(체인)") == True).sum() if "최종 종결 여부(체인)" in base_u.columns else 0,
@@ -2531,7 +2532,7 @@ if _render_tab("capa"):
         k4.metric("통합 이행률",
                    f"{safe_pct(c_d + ai_d + cai_d, c_t + ai_t + cai_t):.0f}%")
         k5.metric("기한초과",
-                   f"{sum(int((d['D-day'].fillna(999) < 0).sum()) for d in [fcapa, fcapaai, fai] if not d.empty and 'D-day' in d.columns)}건")
+                   f"{sum(int((d[active_mask(d)]['D-day'].fillna(999) < 0).sum()) for d in [fcapa, fcapaai, fai] if not d.empty and 'D-day' in d.columns)}건")
 
     with capa_status:
         if fcapa.empty:
@@ -2588,7 +2589,8 @@ if _render_tab("capa"):
         for _label, _df in [("CAPA", fcapa), ("CAPA AI", fcapaai), ("모니터링AI", fai)]:
             if _df.empty or "D-day" not in _df.columns:
                 continue
-            over = _df[_df["D-day"].fillna(999) < 0].copy()
+            _dfa = _df[active_mask(_df)]   # [기한 위험 통일] 완료·취소 제외
+            over = _dfa[_dfa["D-day"].fillna(999) < 0].copy()
             if not over.empty:
                 over["구분"] = _label
                 overdue_frames.append(over)
@@ -3210,7 +3212,8 @@ if _render_tab("deadline"):
     for pk, df_p in F.items():
         if df_p.empty or "D-day" not in df_p.columns:
             continue
-        tmp = df_p[df_p["D-day"].notna()].copy()
+        _dfa = df_p[active_mask(df_p)]   # [기한 위험 통일] 완료·취소 제외(기한 분포·간트도 살아있는 건만)
+        tmp = _dfa[_dfa["D-day"].notna()].copy()
         if not tmp.empty:
             tmp["프로젝트"] = PROJECT_META[pk]["label"]
             dd_frames.append(tmp[["프로젝트", "관리번호", "제목", "기한일", "D-day", "진행상태"]])
@@ -3550,7 +3553,8 @@ Streamlit        : {st.__version__}
                 _overdue = []
                 for pk, df_p in F.items():
                     if not df_p.empty and "D-day" in df_p.columns:
-                        for _, row in df_p[df_p["D-day"].lt(0)].iterrows():
+                        _dfa = df_p[active_mask(df_p)]   # [기한 위험 통일] 완료·취소 제외
+                        for _, row in _dfa[_dfa["D-day"].lt(0)].iterrows():
                             _overdue.append({
                                 "프로젝트": PROJECT_META[pk]["label"],
                                 "관리번호": row.get("관리번호", "-"),
@@ -3562,7 +3566,7 @@ Streamlit        : {st.__version__}
                 for pk in PROJECT_META:
                     df_p = ALL_DFS.get(pk, pd.DataFrame())
                     n = df_p["관리번호"].nunique() if not df_p.empty and "관리번호" in df_p.columns else len(df_p)
-                    ov = int(df_p["D-day"].lt(0).sum()) if not df_p.empty and "D-day" in df_p.columns else 0
+                    ov = int(df_p[active_mask(df_p)]["D-day"].lt(0).sum()) if not df_p.empty and "D-day" in df_p.columns else 0  # [기한 위험 통일] 완료·취소 제외
                     _proj_sum.append({"프로젝트": PROJECT_META[pk]["label"],
                                        "그룹": PROJECT_META[pk]["group"],
                                        "수집 건수": n, "기한 초과": ov})

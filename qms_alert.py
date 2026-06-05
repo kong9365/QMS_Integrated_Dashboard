@@ -174,6 +174,10 @@ def run_overdue_alert(F: dict, PROJECT_META: dict, threshold_days: int = 0) -> d
     Returns: {"slack": bool, "email": bool, "count": int}
     """
     import pandas as pd
+    try:
+        from qms_pro.domain.metrics import active_mask
+    except Exception:
+        active_mask = None
 
     overdue_items: list[dict] = []
     for pk, df_p in F.items():
@@ -181,7 +185,13 @@ def run_overdue_alert(F: dict, PROJECT_META: dict, threshold_days: int = 0) -> d
             continue
         if "D-day" not in df_p.columns:
             continue
+        # [기한 위험 통일] 완료·취소 제외(살아있는 조치대상만) — active_mask 재사용(없으면 D-day<0)
         mask = df_p["D-day"].notna() & (df_p["D-day"] < threshold_days)
+        if active_mask is not None:
+            try:
+                mask = mask & active_mask(df_p)
+            except Exception:
+                pass
         for _, row in df_p[mask].iterrows():
             overdue_items.append({
                 "프로젝트": PROJECT_META.get(pk, {}).get("label", pk),
