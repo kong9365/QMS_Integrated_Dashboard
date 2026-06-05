@@ -2245,9 +2245,16 @@ if _render_tab("exec"):
             st.metric(PROJECT_META[pk]["label"], f"{_n}건")
         _gi += 1
     # 교육: QMS 통합수집 중단(LMS 시스템 이전) — 데이터 수집 없는 '표시용' 안내 카드.
+    #   st.metric 은 값 색상을 못 바꾸므로 메트릭 카드 스타일을 맞춘 커스텀 카드로 표기
+    #   (사용중단=빨강, 다음 줄에 LMS시스템 이전, 좌측 보더도 위험색).
     with _grid_cols[_gi % 8]:
-        st.metric("교육", "사용중단", help="LMS시스템 이전 — QMS 통합수집에서 제외(표시용 안내 카드)")
-        st.caption("LMS시스템 이전")
+        st.markdown(
+            '<div style="background:#ffffff;border-radius:10px;padding:14px 18px;'
+            'border-left:4px solid #D7263D;box-shadow:0 2px 8px rgba(0,0,0,0.06)">'
+            '<div style="font-size:0.77rem;color:#6c757d;font-weight:600;letter-spacing:0.3px">교육</div>'
+            '<div style="font-size:1.42rem;font-weight:700;color:#D7263D;line-height:1.35">사용중단</div>'
+            '<div style="font-size:0.72rem;color:#868e96;margin-top:2px">LMS시스템 이전</div>'
+            '</div>', unsafe_allow_html=True)
 
     S.render_footer()
 
