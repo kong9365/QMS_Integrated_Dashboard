@@ -59,6 +59,23 @@ def _is_closed(row: dict) -> bool:
     return cond == "C"
 
 
+# 기한일 연장(deadline-extension) 전용 프로젝트 라벨.
+#   · 데이터상 유일 식별자: '프로젝트' 필드값이 정확히 '기한연장' 인 레코드는 전수
+#     list_extension(기한일 연장 목록) 소속이며, 他 프로젝트는 이 라벨을 쓰지 않는다
+#     (충돌 0 · 967/967 전수 · 모두 잎(자식 0) 레코드).
+#   · 이들은 본 조치의 '실질 자식'이 아니라 절차적 마감연장 요청이므로, 종결순서
+#     플래그(선종결/누락) 판정의 '종결 모수'에서 제외한다. 마감연장 종결 ≠ 본조치 종결.
+#   · 표시용 자식 수/종결률/미종결 목록 집계는 (요청에 따라) 제외하지 않고 전체 기준 유지.
+_EXTENSION_PROJECT_LABELS: frozenset[str] = frozenset({"기한연장"})
+
+
+def _is_extension_record(row: dict) -> bool:
+    """'기한일 연장' 전용 프로젝트(list_extension) 레코드인지 — 종결순서 모수 제외용."""
+    if not isinstance(row, dict):
+        return False
+    return str(row.get("프로젝트", "") or "").strip() in _EXTENSION_PROJECT_LABELS
+
+
 def _today() -> date:
     return datetime.now().date()
 
@@ -250,11 +267,16 @@ def summarize_children(ctx: LinkageContext, prno) -> dict:
         if max_overdue is None or od > max_overdue:
             max_overdue = od
 
-    # 이상 케이스 플래그
+    # 종결순서 플래그용 '실질 자식' 집합 — 기한일 연장(절차 레코드)은 종결 모수에서 제외.
+    #   (표시용 자식 수/종결률/미종결 목록은 전체 descendants 기준 그대로 유지.)
+    sub_desc = [p for p in descendants if not _is_extension_record(ctx.by_prno[p])]
+    sub_open = [p for p in sub_desc if p not in ctx.closure_set]
+
+    # 이상 케이스 플래그 (실질 자식 기준 — 마감연장만 닫힌 부모 오탐 제거)
     flags: list[str] = []
-    if self_closed and open_children:
+    if self_closed and sub_open:
         flags.append("부모종결_자식미종결")
-    if (not self_closed) and descendants and not open_children:
+    if (not self_closed) and sub_desc and not sub_open:
         flags.append("자식완료_부모미완료")
     flag_str = ", ".join(flags)
 
