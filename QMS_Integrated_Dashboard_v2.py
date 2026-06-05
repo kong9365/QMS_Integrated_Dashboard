@@ -2251,9 +2251,9 @@ if _render_tab("exec"):
         st.markdown(
             '<div style="background:#ffffff;border-radius:10px;padding:12px 12px;'
             'border-left:4px solid #D7263D;box-shadow:0 2px 8px rgba(0,0,0,0.06)">'
-            '<div style="font-size:0.75rem;color:#6c757d;font-weight:600;letter-spacing:0.2px">교육</div>'
-            '<div style="font-size:1.05rem;font-weight:700;color:#D7263D;line-height:1.4;white-space:nowrap">사용중단</div>'
-            '<div style="font-size:0.66rem;color:#868e96;margin-top:3px;line-height:1.25;word-break:keep-all">LMS시스템 이전</div>'
+            '<div style="font-size:0.75rem;color:#6c757d;font-weight:600;letter-spacing:0.2px;white-space:nowrap">교육</div>'
+            '<div style="font-size:1.02rem;font-weight:700;color:#D7263D;line-height:1.4;white-space:nowrap">사용중단</div>'
+            '<div style="font-size:0.64rem;color:#868e96;margin-top:3px;line-height:1.2;word-break:keep-all">LMS시스템 이전</div>'
             '</div>', unsafe_allow_html=True)
 
     S.render_footer()
