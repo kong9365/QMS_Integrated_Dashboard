@@ -2244,6 +2244,10 @@ if _render_tab("exec"):
         with _grid_cols[_gi % 8]:
             st.metric(PROJECT_META[pk]["label"], f"{_n}건")
         _gi += 1
+    # 교육: QMS 통합수집 중단(LMS 시스템 이전) — 데이터 수집 없는 '표시용' 안내 카드.
+    with _grid_cols[_gi % 8]:
+        st.metric("교육", "사용중단", help="LMS시스템 이전 — QMS 통합수집에서 제외(표시용 안내 카드)")
+        st.caption("LMS시스템 이전")
 
     S.render_footer()
 
