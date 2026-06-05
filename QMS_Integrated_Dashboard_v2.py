@@ -2249,11 +2249,11 @@ if _render_tab("exec"):
     #   (사용중단=빨강, 다음 줄에 LMS시스템 이전, 좌측 보더도 위험색).
     with _grid_cols[_gi % 8]:
         st.markdown(
-            '<div style="background:#ffffff;border-radius:10px;padding:14px 18px;'
+            '<div style="background:#ffffff;border-radius:10px;padding:12px 12px;'
             'border-left:4px solid #D7263D;box-shadow:0 2px 8px rgba(0,0,0,0.06)">'
-            '<div style="font-size:0.77rem;color:#6c757d;font-weight:600;letter-spacing:0.3px">교육</div>'
-            '<div style="font-size:1.42rem;font-weight:700;color:#D7263D;line-height:1.35">사용중단</div>'
-            '<div style="font-size:0.72rem;color:#868e96;margin-top:2px">LMS시스템 이전</div>'
+            '<div style="font-size:0.75rem;color:#6c757d;font-weight:600;letter-spacing:0.2px">교육</div>'
+            '<div style="font-size:1.05rem;font-weight:700;color:#D7263D;line-height:1.4;white-space:nowrap">사용중단</div>'
+            '<div style="font-size:0.66rem;color:#868e96;margin-top:3px;line-height:1.25;word-break:keep-all">LMS시스템 이전</div>'
             '</div>', unsafe_allow_html=True)
 
     S.render_footer()
