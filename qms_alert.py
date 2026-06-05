@@ -310,17 +310,19 @@ def _resolve_person_cols(df):
 
 
 def preview_overdue_routing(F: dict, PROJECT_META: dict, name_to_email: dict,
-                            threshold_days: int = 0) -> dict:
+                            threshold_days: int = 0, exclude_names=None) -> dict:
     """기한위험(미완료·미취소·D-day<0) 건을 담당자+등록자 개인 다이제스트로 라우팅 — **dry-run**.
 
     실제 발송은 하지 않고 라우팅 결과 리포트(dict)만 반환. 활성(미완료·미취소) 필터는
     domain.metrics.active_mask 재사용(없으면 D-day<0 만).
+    exclude_names: 퇴사자 등 제외 명단(정규화 후 후보에서 제거 — 미매칭으로도 집계하지 않음).
     """
     import pandas as pd
     try:
         from qms_pro.domain.metrics import active_mask
     except Exception:
         active_mask = None
+    _excl = {normalize_person_name(x) for x in (exclude_names or []) if normalize_person_name(x)}
 
     cols_used, items = {}, []
     for pk, df_p in F.items():
@@ -349,7 +351,7 @@ def preview_overdue_routing(F: dict, PROJECT_META: dict, name_to_email: dict,
     for it in items:
         cands = [(role, normalize_person_name(it.get(key)))
                  for role, key in (("담당자", "담당자_raw"), ("등록자", "등록자_raw"))]
-        cands = [(r, nm) for r, nm in cands if nm]
+        cands = [(r, nm) for r, nm in cands if nm and nm not in _excl]   # 빈값·제외명단(퇴사자) 제거
         seen, dedup = set(), []
         for r, nm in cands:
             if nm not in seen:
@@ -383,6 +385,7 @@ def preview_overdue_routing(F: dict, PROJECT_META: dict, name_to_email: dict,
         "unmatched_names": dict(sorted(unmatched_names.items(), key=lambda x: -x[1])),
         "unmatched_unique": len(unmatched_names),
         "admin_fallback_count": len(admin_fallback),
+        "excluded_names": sorted(_excl),
         "digests": digests,
     }
 

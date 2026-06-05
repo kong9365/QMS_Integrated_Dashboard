@@ -3426,35 +3426,45 @@ if _render_tab("settings"):
                 except Exception as e:
                     st.error(f"전송 실패: {e}")
         st.divider()
-        # ── [①] 수신자 명부 보기 (읽기전용) — 사내 주소록(이름·이메일) ──
-        S.section_header("📒 수신자 명부 (읽기전용)")
+        # ── [①] 수신자 명부 보기 (읽기전용, 드롭다운·기본 숨김) — 사내 주소록(이름·이메일) ──
         try:
             from qms_pro.services import alert_service as _al
             _n2e, _rdf = _al.load_alert_roster()
         except Exception:
             _n2e, _rdf = {}, None
         if _rdf is not None and not _rdf.empty:
-            st.caption(f"등록 {len(_rdf):,}명 · 사내 알림 명부")
-            _rc1, _rc2 = st.columns([2, 1])
-            with _rc1:
-                st.dataframe(_rdf, use_container_width=True, hide_index=True, height=260)
-            with _rc2:
-                _pick = st.selectbox("이름으로 빠른 조회", [""] + _rdf["이름"].tolist(), key="cfg_roster_pick")
-                if _pick:
-                    st.text_input("이메일", value=_n2e.get(_pick, ""), disabled=True, key="cfg_roster_email")
-            st.caption("※ 읽기 전용 — 명부 등록·수정은 개발자(품질부문 AI TF)에게 요청하세요.")
+            with st.expander(f"📒 수신자 명부 보기 ({len(_rdf):,}명) — 읽기전용", expanded=False):
+                _rc1, _rc2 = st.columns([2, 1])
+                with _rc1:
+                    st.dataframe(_rdf, use_container_width=True, hide_index=True, height=300)
+                with _rc2:
+                    _pick = st.selectbox("이름으로 빠른 조회", [""] + _rdf["이름"].tolist(), key="cfg_roster_pick")
+                    if _pick:
+                        st.text_input("이메일", value=_n2e.get(_pick, ""), disabled=True, key="cfg_roster_email")
+                st.caption("※ 읽기 전용 — 명부 등록·수정은 개발자(품질부문 AI TF)에게 요청하세요.")
         else:
-            S.empty_state("알림 명부가 미등록 상태입니다(주소록 파일 없음/비어 있음).")
+            with st.expander("📒 수신자 명부 보기 — 미등록", expanded=False):
+                S.empty_state("알림 명부가 미등록 상태입니다(주소록 파일 없음/비어 있음).")
 
         st.divider()
         st.markdown("**기한 초과 알림 — 라우팅 미리보기 & 발송**")
+        _excl_default = (os.environ.get("QMS_ALERT_EXCLUDE_NAMES", "")
+                         or _load_dotenv_env().get("QMS_ALERT_EXCLUDE_NAMES", ""))
+        _excl_in = st.text_input(
+            "제외 명단 (퇴사자 등 · 콤마 구분)", value=_excl_default,
+            key="cfg_exclude_names",
+            help="여기 적힌 이름은 담당자/등록자 후보 및 '미매칭' 집계에서 제외됩니다(예: 퇴사자). 기본값은 .env QMS_ALERT_EXCLUDE_NAMES.",
+        )
+        os.environ["QMS_ALERT_EXCLUDE_NAMES"] = _excl_in
+        _excl_list = [a.strip() for a in _excl_in.split(",") if a.strip()]
         _ar1, _ar2 = st.columns(2)
         with _ar1:
             if st.button("🔎 라우팅 미리보기 (dry-run · 발송 없음)", use_container_width=True, key="cfg_route_preview"):
                 try:
                     from qms_pro.services import alert_service as _al
                     _n2e2, _ = _al.load_alert_roster()
-                    st.session_state["_route_preview"] = _al.preview_overdue_routing(F, PROJECT_META, _n2e2)
+                    st.session_state["_route_preview"] = _al.preview_overdue_routing(
+                        F, PROJECT_META, _n2e2, exclude_names=_excl_list)
                 except Exception as _e:
                     st.error(f"미리보기 실패: {_e}")
         with _ar2:
@@ -3474,6 +3484,8 @@ if _render_tab("settings"):
             _mc[1].metric("개인 수신자", _rep["recipients"])
             _mc[2].metric("미매칭 이름(종)", _rep["unmatched_unique"])
             _mc[3].metric("관리자 fallback 건", _rep["admin_fallback_count"])
+            if _rep.get("excluded_names"):
+                st.caption(f"🚫 제외 적용(퇴사자 등): {', '.join(_rep['excluded_names'])}")
             with st.expander("프로젝트별 사용 컬럼 (담당자/등록자 자동 탐색 결과)"):
                 st.dataframe(pd.DataFrame([
                     {"프로젝트": k, "담당자 컬럼": v["담당자"] or "—", "등록자 컬럼": v["등록자"] or "—"}
