@@ -333,6 +333,45 @@ def _render_nested(label, parsed) -> None:
         st.markdown(str(parsed))
 
 
+_RISK_COLS = ("관리번호", "제목", "작성팀", "기한일", "D-day", "진행상태")
+
+
+def _build_risk_table(f_open, *, dday_max, limit, strict_lt=False,
+                      dday_default=99999, columns=_RISK_COLS,
+                      suppress_future_warning=True):
+    """전 프로젝트 '살아있는' 기한 위험 표(단일 출처). 종합현황 ③·알림 ① 공용.
+
+    호출부가 ``active_mask`` 로 미리 거른 ``{프로젝트키: df}`` 맵(f_open)을 넘긴다
+    (active_mask 정의·가시성은 호출부에 보존). 프로젝트별로 D-day 임계로 거른 뒤
+    프로젝트 라벨을 붙여 합치고 D-day 오름차순 상위 N 을 반환. 행 없으면 빈 DataFrame.
+      · 종합현황 ③: dday_max=0, strict_lt=True, limit=20  (D-day<0 만)
+      · 알림 ①    : dday_max=7, strict_lt=False, limit=100 (초과+7일 임박)
+    """
+    frames = []
+    for pk, d in f_open.items():
+        if d is None or d.empty or "D-day" not in d.columns:
+            continue
+        dd = _num_series(d["D-day"], default=dday_default)
+        m = (dd < dday_max) if strict_lt else (dd <= dday_max)
+        sub = d[m]
+        if sub.empty:
+            continue
+        keep = [c for c in columns if c in sub.columns]
+        f = sub[keep].copy()
+        f.insert(0, "프로젝트", PROJECT_META[pk]["label"])
+        frames.append(f)
+    if not frames:
+        return pd.DataFrame()
+    if suppress_future_warning:
+        import warnings as _wa
+        with _wa.catch_warnings():
+            _wa.simplefilter("ignore", FutureWarning)
+            out = pd.concat(frames, ignore_index=True)
+    else:
+        out = pd.concat(frames, ignore_index=True)
+    return out.sort_values("D-day").head(limit)
+
+
 def _to_arrow_safe_df(df: pd.DataFrame) -> pd.DataFrame:
     """Streamlit Arrow 직렬화 실패를 줄이기 위한 최소 정규화."""
     if df is None or df.empty:
@@ -1197,24 +1236,49 @@ _LINKAGE_ABNORMAL_FLAGS = [
 
 # 내부 플래그 → 대시보드 표시용 라벨 + 설명
 _LINKAGE_FLAG_LABEL = {
-    "부모종결_자식미종결": "본 프로젝트 종결 · 연관프로젝트 미완료",
-    "자식완료_부모미완료": "연관프로젝트 완료 · 본 프로젝트 미종결",
+    "부모종결_자식미종결": "조기 종결 의심 — 상위 프로젝트 종결·연관 프로젝트 미완료",
+    "자식완료_부모미완료": "종결 누락 — 연관 프로젝트 완료·상위 프로젝트 미종결",
 }
 _LINKAGE_FLAG_HELP = {
     "부모종결_자식미종결": (
-        "본 프로젝트(OOS/일탈/변경 등)는 이미 종결되었지만, "
-        "그로부터 파생된 연관프로젝트(조사·CAPA·Action Item 등)가 아직 닫히지 않은 상태입니다. "
-        "원래는 후속 조치가 완료된 후에 본 프로젝트를 종결해야 하므로 **선(先)종결** 이슈로 점검이 필요합니다."
+        "상위 프로젝트(OOS/일탈/변경 등)는 이미 종결되었지만, "
+        "그로부터 파생된 연관 프로젝트(조사·CAPA·Action Item 등)가 아직 닫히지 않은 상태입니다. "
+        "원래는 후속 조치가 완료된 후에 상위 프로젝트를 종결해야 하므로 **조기(先) 종결** 이슈로 점검이 필요합니다."
     ),
     "자식완료_부모미완료": (
-        "연관프로젝트(조사·CAPA·Action Item 등) 는 모두 완료되었지만, "
-        "본 프로젝트가 여전히 미종결 상태입니다. "
-        "후속 조치가 끝났으므로 **본 프로젝트 종결 처리 누락** 가능성이 있어 점검이 필요합니다."
+        "연관 프로젝트(조사·CAPA·Action Item 등)는 모두 완료되었지만, "
+        "상위 프로젝트가 여전히 미종결 상태입니다. "
+        "후속 조치가 끝났으므로 **상위 프로젝트 종결 처리 누락** 가능성이 있어 점검이 필요합니다."
     ),
 }
 
 
-@st.dialog("🔗 연계 드릴다운", width="large")
+def _map_flags_to_label(s) -> str:
+    """'이상 케이스 플래그' raw 키(콤마 결합 가능)를 사람이 읽는 라벨로 매핑(표시 전용).
+    내부 키·로직(.str.contains)은 불변 — 화면 노출 시점에만 라벨로 치환."""
+    parts = [p.strip() for p in str(s or "").split(",") if p.strip()]
+    return ", ".join(_LINKAGE_FLAG_LABEL.get(p, p) for p in parts)
+
+
+def _fmt_overdue_days(v):
+    """기한 경과 표시. _days_overdue 부호(today−deadline): 양수=기한 지남, 음수=기한 전, 0=오늘.
+    예: 5 → '5일 지남', -18 → '기한까지 18일', 0 → '오늘 마감', 없음 → '—'."""
+    if v is None or v == "":
+        return "—"
+    try:
+        if isinstance(v, float) and pd.isna(v):
+            return "—"
+        n = int(v)
+    except Exception:
+        return "—"
+    if n > 0:
+        return f"{n}일 지남"
+    if n < 0:
+        return f"기한까지 {abs(n)}일"
+    return "오늘 마감"
+
+
+@st.dialog("🔗 연관 프로젝트 보기", width="large")
 def show_linkage_drawer(prno: str):
     """[Task 2.4] 레코드별 부모-자식 체인 드릴다운 드로어(st.dialog 모달).
 
@@ -1239,32 +1303,32 @@ def show_linkage_drawer(prno: str):
     open_n = int(sc.get("자식 미종결 수") or 0)
     delay = sc.get("자식 최대 지연일")
 
-    # ── 헤더: 본 레코드 + 종결 판정 ──
+    # ── 헤더: 본 건 + 종결 판정 ──
     _proj = str(row.get("프로젝트", "") or "?")
     _title = str(row.get("제목", "") or "")
     st.markdown(f"**{_proj}** · `{key}`" + (f" — {_title}" if _title else ""))
     cc1, cc2, cc3 = st.columns(3)
-    cc1.metric("최종 종결(체인)", "✅ 종결" if chain_closed else "⛔ 미종결")
-    cc2.metric("미종결 자식", f"{open_n}건")
-    cc3.metric("최대 지연일", f"{int(delay)}일" if delay not in (None, "") else "—")
+    cc1.metric("전체 종결 여부(연관 포함)", "✅ 종결" if chain_closed else "⛔ 미종결")
+    cc2.metric("미완료 연관 프로젝트", f"{open_n}건")
+    cc3.metric("연관 기한(최대)", _fmt_overdue_days(delay))
 
-    # ── 부모(조상) 체인 ──
+    # ── 상위 프로젝트 ──
     st.markdown("---")
-    st.markdown("**상위(부모·조상) 체인**")
+    st.markdown("**상위 프로젝트**")
     parent_prno = str(sp.get("부모 관리번호", "") or "")
     if parent_prno:
         top = str(sp.get("최상위 조상 관리번호", "") or "")
         depth = sp.get("체인 내 위치(깊이)", 1)
         st.caption(
             f"최상위 `{top}` ({sp.get('최상위 조상 프로젝트','')}) "
-            f"→ … → 부모 `{parent_prno}` ({sp.get('부모 프로젝트','')}) → **본 레코드** (깊이 {depth})"
+            f"→ … → 상위 `{parent_prno}` ({sp.get('부모 프로젝트','')}) → **본 건** ({depth}단계)"
         )
     else:
-        st.caption("부모 없음 — 이 레코드가 체인 루트입니다.")
+        st.caption("최상위 — 상위 프로젝트 없음")
 
-    # ── 자식(후손) 체인 ──
-    st.markdown("**하위(자식·후손) 체인**")
-    st.caption(f"자식 구성: {sc.get('자식 구성') or '없음'} · 전체 자식 {int(sc.get('자식 수(전체)') or 0)}건")
+    # ── 연관 프로젝트 ──
+    st.markdown("**연관 프로젝트**")
+    st.caption(f"연관 프로젝트 구성: {sc.get('자식 구성') or '없음'} · 전체 연관 {int(sc.get('자식 수(전체)') or 0)}건")
     desc = resolve_chain(ctx, key, "descendants")
     if desc:
         rows = []
@@ -1275,16 +1339,30 @@ def show_linkage_drawer(prno: str):
                 "관리번호": npr,
                 "프로젝트": n.get("프로젝트", ""),
                 "제목": (str(n.get("제목", "") or ""))[:40],
-                "종결": "✅" if closed else "⛔",
+                "종결 여부": "✅ 종결" if closed else "⛔ 미종결",
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     else:
-        st.caption("연결된 자식 워크플로우가 없습니다.")
+        st.caption("연결된 연관 프로젝트가 없습니다.")
 
-    # 미종결 목록(있으면)
+    # 미완료 연관 프로젝트 목록 → 소표(원시 dict 덤프 제거)
     open_list = sc.get("자식 미종결 목록") or []
     if open_list:
-        st.markdown(f"**미종결 자식 {len(open_list)}건**: " + ", ".join(f"`{p}`" for p in open_list[:20]))
+        st.markdown(f"**미완료 연관 프로젝트 {len(open_list)}건**")
+        _ol_rows = []
+        for p in open_list[:20]:
+            if isinstance(p, dict):
+                _ol_rows.append({
+                    "관리번호": str(p.get("관리번호", "") or ""),
+                    "프로젝트": p.get("프로젝트", ""),
+                    "제목": (str(p.get("제목", "") or ""))[:40],
+                    "진행상태": p.get("진행상태", ""),
+                    "기한일": p.get("기한일", ""),
+                    "기한": _fmt_overdue_days(p.get("지연일")),
+                })
+            else:
+                _ol_rows.append({"관리번호": str(p)})
+        st.dataframe(pd.DataFrame(_ol_rows), use_container_width=True, hide_index=True)
 
 
 def _linkage_drawer_entry(df: pd.DataFrame, key_suffix: str, title: str | None = None):
@@ -1302,7 +1380,7 @@ def _linkage_drawer_entry(df: pd.DataFrame, key_suffix: str, title: str | None =
     # [Task 3.1] 선택+🔗 패턴을 표준 컴포넌트로 통일(중복 제거).
     C.linkage_drilldown(
         prnos, key=f"drawer_{key_suffix}", on_select=show_linkage_drawer,
-        caption="관리번호를 선택하면 부모-자식 체인과 최종 종결 여부(체인)·지연일을 모달로 봅니다.",
+        caption="관리번호를 선택하면 상위·연관 프로젝트 관계와 전체 종결 여부(연관 포함)·기한을 봅니다.",
     )
 
 
@@ -1350,7 +1428,7 @@ def _ws_closure_counts(ws_id: str, dfs: dict) -> tuple[int, int]:
 
 def render_closure_check(ws_id: str, dfs: dict, key_suffix: str):
     """[Task 2.5] 워크스페이스 소유 레코드의 종결순서 점검 케이스 목록 + 🔗 드로어."""
-    S.section_header("종결순서 점검 (소유 레코드 기준)", "🧭")
+    S.section_header("종결순서 점검 (소유 건 기준)", "🧭")
     owned = _WS_OWNED_PROJECTS.get(ws_id, [])
     # 소유 프로젝트들의 플래그 보유 레코드만 모음
     frames = []
@@ -1367,16 +1445,16 @@ def render_closure_check(ws_id: str, dfs: dict, key_suffix: str):
     cc1.metric("선종결 의심", f"{pre_n}건", help=_LINKAGE_FLAG_HELP[_FLAG_PRE])
     cc2.metric("종결처리 누락", f"{miss_n}건", help=_LINKAGE_FLAG_HELP[_FLAG_MISS])
     if not frames:
-        st.success("점검 대상 케이스가 없습니다 — 소유 레코드 모두 종결순서 정상.")
+        st.success("점검 대상 건이 없습니다 — 소유 건 모두 종결순서 정상.")
         return
     allhit = pd.concat(frames, ignore_index=True)
     _disp_cols = [c for c in ["관리번호", "프로젝트", "제목", "진행상태", "이상 케이스 플래그", "자식 미종결 수"] if c in allhit.columns]
-    st.caption("행의 관리번호를 선택해 🔗 연계 드릴다운으로 체인을 점검하세요.")
-    # [Task 3.1] 표준 데이터 테이블 + 표준 드릴다운(중복 제거).
-    C.data_table(
-        allhit[_disp_cols].rename(columns={"이상 케이스 플래그": "점검 케이스"}),
-        mono_extra=["자식 미종결 수"],
-    )
+    st.caption("행의 관리번호를 선택해 🔗 연관 프로젝트 보기로 연관 관계를 점검하세요.")
+    # [표시 전용] raw 플래그 키 → 라벨 매핑 + '자식 미종결 수' → '미완료 연관 수' 표기(내부 컬럼·로직 불변).
+    _show = allhit[_disp_cols].rename(columns={"이상 케이스 플래그": "점검 케이스", "자식 미종결 수": "미완료 연관 수"})
+    if "점검 케이스" in _show.columns:
+        _show["점검 케이스"] = _show["점검 케이스"].apply(_map_flags_to_label)
+    C.data_table(_show, mono_extra=["미완료 연관 수"])
     _prnos = allhit["관리번호"].astype(str).tolist() if "관리번호" in allhit.columns else []
     C.linkage_drilldown(_prnos, key=f"closure_{key_suffix}", on_select=show_linkage_drawer)
 
@@ -1740,7 +1818,7 @@ def render_event_category_tab(
     mc = _month_col_for_df(ftab)
 
     tab_kpi, tab_trend, tab_cause, tab_recur, tab_team, tab_link, tab_raw = st.tabs(
-        ["개요·KPI", "경향분석", "원인·유형", "재발", "팀별·외주", "연계 현황", "원본 데이터"]
+        ["개요·KPI", "경향분석", "원인·유형", "재발", "팀별·외주", "연관 프로젝트", "원본 데이터"]
     )
 
     # ─── 개요·KPI ─────────────────────────────────────────────────────
@@ -2328,27 +2406,21 @@ if _render_tab("exec"):
     d1, d2 = st.columns([3, 2])
     with d1:
         st.caption("🚨 기한 위험 — 즉시 조치 (전 프로젝트 D-day 오름차순)")
-        _ov_frames = []
-        for pk, df_p in F.items():
-            if df_p.empty or "D-day" not in df_p.columns:
-                continue
-            _dfa = df_p[active_mask(df_p)]   # [기한 위험 통일] 완료·취소 제외(살아있는 조치대상만)
-            _dn = _num_series(_dfa["D-day"], default=0.0)
-            _over = _dfa[_dn < 0].copy()
-            if not _over.empty:
-                _over["프로젝트"] = PROJECT_META[pk]["label"]
-                _ov_frames.append(_over)
-        if _ov_frames:
-            _oa = pd.concat(_ov_frames, ignore_index=True)
-            _team_col = "작성팀" if "작성팀" in _oa.columns else None
-            _cols = ["프로젝트"] + [c for c in ["관리번호", "제목", _team_col, "기한일", "D-day", "진행상태"] if c and c in _oa.columns]
-            _top = _oa.sort_values("D-day").head(20)
-            # [Task 3.1] 표준 데이터 테이블(상태 Pill·모노 관리번호/D-day) + 표준 드릴다운(중복 제거).
-            C.data_table(_top[_cols], status=True, height=300)
+        # [준중복 정리] active_mask 로 거른 맵을 단일 출처 헬퍼(_build_risk_table)에 위임.
+        _F_open_ov = {pk: (df_p[active_mask(df_p)] if not df_p.empty else df_p)
+                      for pk, df_p in F.items()}
+        _top = _build_risk_table(_F_open_ov, dday_max=0, strict_lt=True, limit=20, dday_default=0.0)
+        if not _top.empty:
+            # [Task 3.1] 표준 데이터 테이블(상태 Pill·모노 관리번호/D-day) + 표준 드릴다운.
+            C.data_table(_top, status=True, height=300)
             _prnos = _top["관리번호"].astype(str).tolist() if "관리번호" in _top.columns else []
             C.linkage_drilldown(_prnos, key="ov_overdue", on_select=show_linkage_drawer)
         else:
             st.success("기한 초과 항목이 없습니다.")
+        # [역할 분리] 경영진 요약(상위 20·초과만) → 운영 전체(알림 ①: 초과+임박·상위 100)로 이동.
+        if st.button("알림·모니터링에서 전체 보기 →", key="ov_overdue_jump", use_container_width=True):
+            st.session_state["_ws_jump_target"] = "알림·모니터링"
+            st.rerun()
     with d2:
         st.caption("🧭 종결순서 점검 — 전사 요약")
         C.signal_card("선종결 의심", f"{_ov_pre}건", tone="warn", sub=_LINKAGE_FLAG_HELP[_FLAG_PRE])
@@ -2410,7 +2482,7 @@ if _render_tab("oos"):
     mc_oos = _mc_oos
 
     o_tab1, o_tab2, o_tab3, o_tab4, o_tab_link, o_tab_raw = st.tabs(
-        ["현황", "경향분석", "경향분석보고서", "마감회의 & GMP", "연계 현황", "원본 데이터"]
+        ["현황", "경향분석", "경향분석보고서", "마감회의 & GMP", "연관 프로젝트", "원본 데이터"]
     )
     with o_tab1:
         oos_panels.render_oos_status(
@@ -2525,7 +2597,7 @@ if _render_tab("inv"):
     st.markdown("---")
 
     i_overview, i_m1e, i_trend, i_link, i_tab_raw = st.tabs(
-        ["개요·KPI", "5M1E 상세", "추이·팀별", "연계 현황", "원본 데이터"]
+        ["개요·KPI", "5M1E 상세", "추이·팀별", "연관 프로젝트", "원본 데이터"]
     )
 
     with i_overview:
@@ -2644,7 +2716,7 @@ if _render_tab("capa"):
     cai_t = len(fcapaai); cai_d = int((fcapaai["완료여부"] == "C").sum()) if "완료여부" in fcapaai.columns and cai_t else 0
 
     capa_kpi, capa_status, capa_ai, capa_deadline, capa_link, capa_tab_raw = st.tabs(
-        ["통합 KPI", "CAPA 현황", "Action Item 이행", "기한·지연", "연계 현황", "원본 데이터"]
+        ["통합 KPI", "CAPA 현황", "Action Item 이행", "기한·지연", "연관 프로젝트", "원본 데이터"]
     )
 
     with capa_kpi:
@@ -2753,7 +2825,7 @@ if _render_tab("change"):
 
     chg_kpi, chg_grade, chg_impact, chg_out, chg_ai, chg_link, chg_tab_raw = st.tabs(
         ["통합 KPI", "등급·구분", "영향성평가", "외주변경", "Action Item",
-         "연계 현황", "원본 데이터"]
+         "연관 프로젝트", "원본 데이터"]
     )
 
     with chg_kpi:
@@ -2892,7 +2964,7 @@ if _render_tab("complain"):
     st.markdown("---")
 
     cmp_kpi, cmp_type, cmp_cause, cmp_perf, cmp_link, cmp_tab_raw = st.tabs(
-        ["개요·KPI", "유형·처리결과", "원인·결론", "처리 성능", "연계 현황", "원본 데이터"]
+        ["개요·KPI", "유형·처리결과", "원인·결론", "처리 성능", "연관 프로젝트", "원본 데이터"]
     )
 
     ct = len(fcmp)
@@ -4023,23 +4095,9 @@ if _render_tab("alerts_new"):
     with _ac[2]:
         C.signal_card("D-7 임박", f"{_imm7:,}건", tone="warn", icon="", sub="0 ≤ D-day ≤ 7")
 
-    _risk_frames = []
-    for _pk, _d in _F_open.items():   # [버그수정] 미완료(_F_open)에서만 추출 → 표에 '완료' 행 미노출
-        if _d is None or _d.empty or "D-day" not in _d.columns:
-            continue
-        _dd = _num_series(_d["D-day"], default=99999)
-        _sub = _d[_dd <= 7]   # 초과 + 7일 이내 임박(완료 제외)
-        if not _sub.empty:
-            _keep = [c for c in ["관리번호", "제목", "작성팀", "기한일", "D-day", "진행상태"] if c in _sub.columns]
-            _f = _sub[_keep].copy()
-            _f.insert(0, "프로젝트", PROJECT_META[_pk]["label"])
-            _risk_frames.append(_f)
-    if _risk_frames:
-        import warnings as _wa
-        with _wa.catch_warnings():
-            _wa.simplefilter("ignore", FutureWarning)
-            _risk = pd.concat(_risk_frames, ignore_index=True)
-        _risk = _risk.sort_values("D-day").head(100)
+    # [준중복 정리] 종합현황 ③ 와 동일한 단일 출처 헬퍼 사용(범위만 D-day≤7·상위100).
+    _risk = _build_risk_table(_F_open, dday_max=7, strict_lt=False, limit=100, dday_default=99999)
+    if not _risk.empty:
         st.caption(f"기한 위험(초과 + 7일 이내) 상위 {len(_risk)}건 — D-day 오름차순")
         C.data_table(_risk, status=True, height=360)
         C.linkage_drilldown(_risk["관리번호"].astype(str).tolist(), key="alert_risk",

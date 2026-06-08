@@ -197,10 +197,10 @@ def linkage_drilldown(
     *,
     key: str,
     on_select: Callable[[str], None],
-    label: str = "🔗 연계 보기",
+    label: str = "🔗 연관 프로젝트 보기",
     caption: str | None = None,
 ) -> None:
-    """상세 표의 관리번호를 선택해 🔗 연계 드릴다운(체인·종결여부·지연일)을 호출."""
+    """상세 표의 관리번호를 선택해 🔗 연관 프로젝트 보기(상위·연관·종결여부·기한)를 호출."""
     opts = [str(p) for p in prnos]
     if not opts:
         return
