@@ -252,6 +252,87 @@ def _is_displayable(val) -> bool:
     s = str(val).strip()
     return bool(s) and s not in ("[]", "{}", "nan", "None", "NaT")
 
+
+def _try_parse_nested(v):
+    """list/dict 또는 그 JSON/파이썬-repr 문자열을 구조로 파싱. 빈값·절단·실패면 None.
+    (캐시는 _ext_=JSON dumps, 정리 중첩컬럼=str() repr 두 형식이 섞여 json→ast 순 폴백.)
+    ast.literal_eval 만 사용(리터럴 전용) — eval 미사용."""
+    if isinstance(v, (list, dict)):
+        return v if len(v) > 0 else None
+    if not isinstance(v, str):
+        return None
+    s = v.strip()
+    if not (s.startswith("[") or s.startswith("{")):
+        return None
+    try:
+        j = json.loads(s)
+    except Exception:
+        try:
+            import ast
+            j = ast.literal_eval(s)
+        except Exception:
+            return None  # 2000자 절단 등 → 호출부에서 현행 한 줄 덤프로 안전 폴백
+    return j if isinstance(j, (list, dict)) and len(j) > 0 else None
+
+
+def _is_empty_grid(v) -> bool:
+    """list-of-dict / dict 인데 모든 값이 빈 문자열/None 인 '빈 그리드'인지(노이즈)."""
+    j = v if isinstance(v, (list, dict)) else None
+    if j is None and isinstance(v, str):
+        s = v.strip()
+        if not (s.startswith("[") or s.startswith("{")):
+            return False
+        try:
+            j = json.loads(s)
+        except Exception:
+            try:
+                import ast
+                j = ast.literal_eval(s)
+            except Exception:
+                return False
+    if isinstance(j, list) and j and all(isinstance(d, dict) for d in j):
+        return all((x is None or str(x).strip() == "") for d in j for x in d.values())
+    if isinstance(j, dict) and j:
+        return all((x is None or str(x).strip() == "") for x in j.values())
+    return False
+
+
+def _render_nested(label, parsed) -> None:
+    """중첩 구조를 가독 렌더: 의견그리드(코멘트+날짜)→날짜순 타임라인, 정보/조치형→소표.
+    어떤 예외든 원문 한 줄로 안전 폴백(현행 대비 절대 악화 없음)."""
+    st.markdown(f"**{label}**")
+    try:
+        node = [parsed] if isinstance(parsed, dict) else parsed
+        if isinstance(node, list) and node and all(isinstance(d, dict) for d in node):
+            df = pd.DataFrame(node)
+            cols = [str(c) for c in df.columns]
+            datecol = next((c for c, cs in zip(df.columns, cols)
+                            if cs.endswith("일") or "일자" in cs or "날짜" in cs or "date" in cs.lower()), None)
+            textcol = next((c for c, cs in zip(df.columns, cols)
+                            if any(t in cs for t in ("의견", "코멘트", "내용", "사유", "comment", "content"))), None)
+            rendered = False
+            if datecol is not None and textcol is not None:
+                tmp = df[[datecol, textcol]].copy()
+                tmp = tmp[tmp[textcol].astype(str).str.strip() != ""]
+                if not tmp.empty:
+                    try:
+                        tmp = tmp.sort_values(datecol)
+                    except Exception:
+                        pass
+                    for _, r in tmp.iterrows():
+                        st.markdown(f"- {str(r[datecol])[:10]} — {r[textcol]}")
+                    rendered = True
+            if not rendered:
+                st.table(df.fillna("").astype(str))
+        elif isinstance(node, list):
+            for x in node:
+                st.markdown(f"- {x}")
+        else:
+            st.markdown(str(parsed))
+    except Exception:
+        st.markdown(str(parsed))
+
+
 def _to_arrow_safe_df(df: pd.DataFrame) -> pd.DataFrame:
     """Streamlit Arrow 직렬화 실패를 줄이기 위한 최소 정규화."""
     if df is None or df.empty:
@@ -1019,28 +1100,70 @@ def render_raw_data_section(
                         f"관리번호 {selected_qms} 상세 정보 ({len(detail_rows)}행)",
                         expanded=True,
                     ):
+                        # [P1] _ext_* 기본 숨김 토글(메인 표 토글 L984-989 패턴 재사용, 키 분리)
+                        show_ext_detail = st.checkbox(
+                            "원본 키(_ext_*) 포함", value=False,
+                            key=f"raw_detail_ext_{key_suffix}",
+                            help="파서가 한국어로 매핑하지 않은 원본 API 필드(_ext_*)까지 노출합니다. 기본은 숨김.",
+                        )
                         skip_cols = {"연도", "월", "월문자", "완료여부"}
-                        for _, row in detail_rows.iterrows():
-                            items = []
+                        for _ri, (_, row) in enumerate(detail_rows.iterrows()):
+                            simple, blocks, noise = [], [], []
                             for col in raw_all.columns:
                                 if col in skip_cols:
                                     continue
+                                if not show_ext_detail and str(col).startswith("_ext_"):
+                                    continue
                                 v = row[col]
-                                if v is None:
+                                s = "" if v is None else str(v).strip()
+                                # [P2] 노이즈(값은 있으나 무의미) → '미해당' expander (삭제 아님)
+                                if (str(col).startswith("_ext_") and s == "False") \
+                                        or s in ("[]", "{}") \
+                                        or s.lower() in ("na", "n/a") \
+                                        or _is_empty_grid(v):
+                                    noise.append((col, v))
                                     continue
-                                if isinstance(v, float) and pd.isna(v):
+                                if not _is_displayable(v):   # 진짜 빈값(None/NaN/공백/nan) → 미표시
                                     continue
-                                if isinstance(v, str) and not v.strip():
-                                    continue
-                                items.append((col, v))
+                                # [P3] 중첩 → 소표/타임라인, 장문 → 전체폭, 그 외 → 2열
+                                parsed = _try_parse_nested(v)
+                                if parsed is not None:
+                                    blocks.append((col, v, parsed))
+                                elif isinstance(v, str) and (len(s) > 200 or "\n" in v):
+                                    blocks.append((col, v, None))
+                                else:
+                                    simple.append((col, v))
+                            # 단문: 기존 2열 균등 레이아웃 유지
                             left, right = st.columns(2)
-                            mid = (len(items) + 1) // 2
+                            mid = (len(simple) + 1) // 2
                             with left:
-                                for k_, v_ in items[:mid]:
+                                for k_, v_ in simple[:mid]:
                                     st.markdown(f"**{k_}**: {v_}")
                             with right:
-                                for k_, v_ in items[mid:]:
+                                for k_, v_ in simple[mid:]:
                                     st.markdown(f"**{k_}**: {v_}")
+                            # 중첩/장문: 전체폭 블록
+                            for col, v, parsed in blocks:
+                                if parsed is not None:
+                                    _render_nested(col, parsed)
+                                else:
+                                    st.markdown(f"**{col}**")
+                                    st.markdown(v)
+                            # [P2] 노이즈는 삭제하지 않고 체크박스로 접어 둠(추적성 보존).
+                            #   ※ 상세는 이미 st.expander 안 → expander 중첩 불가라 checkbox 사용.
+                            if noise:
+                                if st.checkbox(
+                                    f"미해당 항목 {len(noise)}개 보기", value=False,
+                                    key=f"raw_detail_na_{key_suffix}_{_ri}",
+                                ):
+                                    _nl, _nr = st.columns(2)
+                                    _nm = (len(noise) + 1) // 2
+                                    with _nl:
+                                        for k_, v_ in noise[:_nm]:
+                                            st.markdown(f"**{k_}**: {v_}")
+                                    with _nr:
+                                        for k_, v_ in noise[_nm:]:
+                                            st.markdown(f"**{k_}**: {v_}")
                             st.divider()
 
         st.divider()
@@ -3441,9 +3564,13 @@ if _render_tab("settings"):
                     st.error(f"전송 실패: {e}")
         st.divider()
         # ── [①] 수신자 명부 보기 (읽기전용, 드롭다운·기본 숨김) — 사내 주소록(이름·이메일) ──
+        # 명부 경로: os.environ 우선, 없으면 .env(QMS_ALERT_ROSTER_PATH) 폴백(제외명단과 동일 패턴).
+        # streamlit run 은 .env 를 os.environ 에 자동 주입하지 않으므로 폴백이 없으면 .env 설정이 무시됨.
+        _roster_path = (os.environ.get("QMS_ALERT_ROSTER_PATH", "").strip()
+                        or _load_dotenv_env().get("QMS_ALERT_ROSTER_PATH", "").strip() or None)
         try:
             from qms_pro.services import alert_service as _al
-            _n2e, _rdf = _al.load_alert_roster()
+            _n2e, _rdf = _al.load_alert_roster(_roster_path)
         except Exception:
             _n2e, _rdf = {}, None
         if _rdf is not None and not _rdf.empty:
@@ -3476,7 +3603,7 @@ if _render_tab("settings"):
             if st.button("🔎 라우팅 미리보기 (dry-run · 발송 없음)", use_container_width=True, key="cfg_route_preview"):
                 try:
                     from qms_pro.services import alert_service as _al
-                    _n2e2, _ = _al.load_alert_roster()
+                    _n2e2, _ = _al.load_alert_roster(_roster_path)
                     st.session_state["_route_preview"] = _al.preview_overdue_routing(
                         F, PROJECT_META, _n2e2, exclude_names=_excl_list)
                 except Exception as _e:
