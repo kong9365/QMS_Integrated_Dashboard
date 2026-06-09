@@ -26,16 +26,23 @@ from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.util import Inches, Pt
 
 _MONTH_LABELS = [f"{m}월" for m in range(1, 13)]
-_KD_RED = RGBColor(0xE8, 0x30, 0x08)
-_NAVY = RGBColor(0x1F, 0x3A, 0x5F)
-_BAR = RGBColor(0x4C, 0x78, 0xA8)
+_KD_RED = RGBColor(0xE8, 0x30, 0x08)     # 강조/경고
+_NAVY = RGBColor(0x1F, 0x3A, 0x5F)       # 헤더/주계열
+_BAR = RGBColor(0x4C, 0x78, 0xA8)        # (구) 막대색 — 하위호환
 _DARK = RGBColor(0x59, 0x59, 0x59)
 _GRAY = RGBColor(0x80, 0x80, 0x80)
 _WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+_GREEN = RGBColor(0x1F, 0x9D, 0x63)      # 완료(성공)
+_INK = RGBColor(0x1B, 0x23, 0x30)        # 본문 잉크
+_LINE = RGBColor(0xE1, 0xE6, 0xEF)       # 옅은선/격자
+_ZEBRA = RGBColor(0xF4, 0xF7, 0xFA)
+_KD_PALETTE = [_NAVY, _KD_RED, RGBColor(0x2F, 0x6F, 0xED),
+               RGBColor(0x0E, 0x9A, 0xA7), RGBColor(0xE8, 0x83, 0x0C), RGBColor(0x7A, 0x5A, 0xF0)]
 
 
 # ── render_oos_gmp 와 동일한 보조 계산(미러링) ──
@@ -78,62 +85,110 @@ def _textbox(slide, text, *, size=20, color=_NAVY, bold=True, left=0.5, top=0.3,
     return tb
 
 
-def _kpi_table(slide, rows, *, left, top, width, height):
-    shape = slide.shapes.add_table(len(rows) + 1, 2, Inches(left), Inches(top), Inches(width), Inches(height))
-    table = shape.table
-    table.columns[0].width = Inches(width * 0.6)
-    table.columns[1].width = Inches(width * 0.4)
-    for j, h in enumerate(("항목", "값")):
-        c = table.cell(0, j)
-        c.text = h
-        c.fill.solid()
-        c.fill.fore_color.rgb = _NAVY
-        for p in c.text_frame.paragraphs:
-            p.alignment = PP_ALIGN.CENTER
-            for run in p.runs:
-                run.font.bold = True
-                run.font.color.rgb = _WHITE
-                run.font.size = Pt(12)
-                run.font.name = "맑은 고딕"
-    for i, (label, value) in enumerate(rows, start=1):
-        for j, val in enumerate((label, value)):
-            c = table.cell(i, j)
-            c.text = str(val)
-            for p in c.text_frame.paragraphs:
-                p.alignment = PP_ALIGN.LEFT if j == 0 else PP_ALIGN.RIGHT
-                for run in p.runs:
-                    run.font.size = Pt(12)
-                    run.font.bold = (j == 1)
-                    run.font.name = "맑은 고딕"
+def _panel_title(slide, text, *, top=0.35):
+    """슬라이드 패널 제목(네이비 굵게) + 하단 KD Red 얇은 바."""
+    _textbox(slide, text, size=22, color=_NAVY, bold=True, left=0.6, top=top, width=12.1, height=0.6)
+    bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.6), Inches(top + 0.62), Inches(2.4), Inches(0.05))
+    bar.fill.solid()
+    bar.fill.fore_color.rgb = _KD_RED
+    bar.line.fill.background()
+    bar.shadow.inherit = False
 
 
-def _bar_chart(slide, categories, values, *, left, top, width, height,
-               title=None, horizontal=False, color=_BAR):
+def _caption(slide, text, *, left, top, width=5.8):
+    """차트 위 작은 패널 캡션(네이비 굵게) — 차트 내부 제목 대체(중복 방지)."""
+    _textbox(slide, text, size=13, color=_NAVY, bold=True, left=left, top=top, width=width, height=0.35)
+
+
+def _footer(slide, *, page=None, as_of=""):
+    """하단 푸터(브랜드 + 기준일) + 우측 페이지 번호."""
+    _textbox(slide, f"KD-MoaQ · 광동제약 품질부문{('  ·  ' + as_of) if as_of else ''}",
+             size=9, color=_GRAY, bold=False, left=0.6, top=7.05, width=10.5, height=0.35)
+    if page is not None:
+        _textbox(slide, str(page), size=9, color=_GRAY, bold=False,
+                 left=12.4, top=7.05, width=0.5, height=0.35, align=PP_ALIGN.RIGHT)
+
+
+def _kpi_cards(slide, cards, *, left, top, width, height):
+    """요약 KPI 카드(둥근 사각형: 큰 숫자+라벨, 상단 색 보더). cards=[(label, value, accent_rgb), ...]."""
+    n = len(cards)
+    gap = 0.22
+    cw = (width - gap * (n - 1)) / n
+    for i, (label, value, accent) in enumerate(cards):
+        x = left + i * (cw + gap)
+        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(top), Inches(cw), Inches(height))
+        card.fill.solid()
+        card.fill.fore_color.rgb = _WHITE
+        card.line.color.rgb = _LINE
+        card.line.width = Pt(1.0)
+        card.shadow.inherit = False
+        bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(top), Inches(cw), Inches(0.09))
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = accent
+        bar.line.fill.background()
+        bar.shadow.inherit = False
+        tf = card.text_frame
+        tf.word_wrap = True
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        p1 = tf.paragraphs[0]
+        p1.alignment = PP_ALIGN.CENTER
+        r1 = p1.add_run()
+        r1.text = str(value)
+        r1.font.size = Pt(26)
+        r1.font.bold = True
+        r1.font.color.rgb = _NAVY
+        r1.font.name = "맑은 고딕"
+        p2 = tf.add_paragraph()
+        p2.alignment = PP_ALIGN.CENTER
+        r2 = p2.add_run()
+        r2.text = str(label)
+        r2.font.size = Pt(12)
+        r2.font.color.rgb = _DARK
+        r2.font.name = "맑은 고딕"
+
+
+def _bar_chart(slide, categories, values, *, left, top, width, height, horizontal=False):
+    """막대 차트(네이티브) — 주계열 네이비·최댓값만 KD Red·데이터라벨 12pt·옅은 격자·한글 폰트.
+    제목은 차트 내부 대신 패널 캡션(_caption)으로 분리(중복 방지)."""
     cd = CategoryChartData()
     cd.categories = [str(c) for c in categories]
-    cd.add_series("건수", [float(v) for v in values])
+    vals = [float(v) for v in values]
+    cd.add_series("건수", vals)
     ctype = XL_CHART_TYPE.BAR_CLUSTERED if horizontal else XL_CHART_TYPE.COLUMN_CLUSTERED
     frame = slide.shapes.add_chart(ctype, Inches(left), Inches(top), Inches(width), Inches(height), cd)
     chart = frame.chart
     chart.has_legend = False
-    if title:
-        chart.has_title = True
-        chart.chart_title.text_frame.text = title
-        try:
-            chart.chart_title.text_frame.paragraphs[0].runs[0].font.size = Pt(13)
-        except Exception:
-            pass
-    else:
-        chart.has_title = False
+    chart.has_title = False
     try:
         plot = chart.plots[0]
         plot.has_data_labels = True
-        plot.data_labels.number_format = "0"
-        plot.data_labels.number_format_is_linked = False
-        plot.data_labels.font.size = Pt(10)
+        dl = plot.data_labels
+        dl.number_format = "0"
+        dl.number_format_is_linked = False
+        dl.font.size = Pt(12)
+        dl.font.name = "맑은 고딕"
+        dl.font.color.rgb = _INK
         series = plot.series[0]
         series.format.fill.solid()
-        series.format.fill.fore_color.rgb = color
+        series.format.fill.fore_color.rgb = _NAVY
+        # 최댓값 막대만 KD Red 강조(첫 최댓값 1개)
+        if vals:
+            mx = max(vals)
+            hit = False
+            for i, v in enumerate(vals):
+                if not hit and v == mx and v > 0:
+                    pt = series.points[i]
+                    pt.format.fill.solid()
+                    pt.format.fill.fore_color.rgb = _KD_RED
+                    hit = True
+        # 축 한글 폰트 + 옅은 격자
+        for ax in (chart.category_axis, chart.value_axis):
+            ax.tick_labels.font.size = Pt(10)
+            ax.tick_labels.font.name = "맑은 고딕"
+        chart.value_axis.has_major_gridlines = True
+        gl = chart.value_axis.major_gridlines.format.line
+        gl.color.rgb = _LINE
+        gl.width = Pt(0.5)
     except Exception:
         pass
     return chart
@@ -193,35 +248,25 @@ def build_oos_gmp_report_pptx(
     else:
         capa_prog2 = 0.0
 
-    # ── Slide 2: 1행 — 현황표 · 월별 건수 · Analyst error ──
+    # ── Slide 2: 개요 — KPI 카드 + 월별 추세(1메시지: 전반 현황) ──
     s = prs.slides.add_slide(blank)
-    _textbox(s, "시험실 이벤트 발생 현황", size=20)
-    _textbox(s, "시험실 이벤트 발생 현황", size=12, color=_DARK, top=1.15, left=0.5, width=3.6, height=0.3)
-    _kpi_table(s, [
-        ("전체 건수", f"{total_events}건"),
-        ("완료 건수", f"{completed_ev}건"),
-        ("완료율 (%)", f"{ev_comp_rate:.0f}%"),
-        ("CAPA 건수", f"{capa_cnt2}건"),
-        ("CAPA 진행률", f"{capa_prog2:.1f}%"),
-    ], left=0.5, top=1.5, width=3.6, height=3.0)
-
+    _panel_title(s, "시험실 이벤트 발생 현황")
+    _kpi_cards(s, [
+        ("전체 건수", f"{total_events:,}", _NAVY),
+        ("완료 건수", f"{completed_ev:,}", _GREEN),
+        ("완료율", f"{ev_comp_rate:.0f}%", _NAVY),
+        ("미완료 건수", f"{total_events - completed_ev:,}", _KD_RED),
+    ], left=0.6, top=1.4, width=12.1, height=1.5)
+    _textbox(s, f"CAPA {capa_cnt2}건 · 진행률 {capa_prog2:.1f}%", size=12, color=_GRAY, bold=False,
+             left=0.6, top=3.05, width=12.1, height=0.35)
     monthly = _monthly_counts(filtered, primary_year, yc, mc)
-    _bar_chart(s, _MONTH_LABELS, monthly, left=4.4, top=1.3, width=4.5, height=5.4, title="월별 시험실이벤트 건수")
+    _caption(s, "월별 시험실이벤트 건수", left=0.6, top=3.55, width=12.1)
+    _bar_chart(s, _MONTH_LABELS, monthly, left=0.6, top=3.95, width=12.1, height=2.95)
+    _footer(s, page=2, as_of=as_of)
 
-    # Analyst error 감소율
-    if "이상발생 원인" in df_full.columns and "건수기여도" in df_full.columns and year_col in df_full.columns:
-        ae_prev = round(float(df_full[(df_full[year_col] == prev_year) & (df_full["이상발생 원인"] == "Analyst error")]["건수기여도"].sum()))
-        ae_curr = round(float(filtered[filtered["이상발생 원인"] == "Analyst error"]["건수기여도"].sum())) if "이상발생 원인" in filtered.columns else 0
-        if ae_prev > 0 or ae_curr > 0:
-            _bar_chart(s, [str(prev_year), str(primary_year)], [ae_prev, ae_curr],
-                       left=9.1, top=1.3, width=3.8, height=4.6, title="Analyst error 감소율")
-            red = safe_pct(ae_prev - ae_curr, ae_prev) if ae_prev > 0 else 0.0
-            _txt = f"감소율: -{red:.0f}%" if red > 0 else f"증가율: +{abs(red):.0f}%"
-            _textbox(s, _txt, size=15, color=_KD_RED, top=6.0, left=9.1, width=3.8, height=0.5, align=PP_ALIGN.CENTER)
-
-    # ── Slide 3: 2행 — 원인 대분류 · 소분류 · 시험종류별 ──
+    # ── Slide 3: 원인 분석 — 대분류 + 소분류(가로) (1메시지: 왜 발생했나) ──
     s = prs.slides.add_slide(blank)
-    _textbox(s, "시험실이벤트 원인 분석", size=20)
+    _panel_title(s, "시험실이벤트 원인 분석")
     if "확인된 이벤트 분류" in filtered.columns:
         major = (
             filtered[filtered["확인된 이벤트 분류"].notna() & (filtered["확인된 이벤트 분류"] != "")]
@@ -229,8 +274,9 @@ def build_oos_gmp_report_pptx(
         )
         major.columns = ["분류", "건수"]
         if not major.empty:
+            _caption(s, "원인 대분류", left=0.6, top=1.5, width=6.0)
             _bar_chart(s, major["분류"].tolist(), major["건수"].tolist(),
-                       left=0.4, top=1.3, width=4.1, height=5.4, title="원인 대분류")
+                       left=0.6, top=1.95, width=6.0, height=4.9)
     if "이상발생 원인" in filtered.columns:
         minor = (
             filtered[filtered["이상발생 원인"].notna() & (filtered["이상발생 원인"] != "")]
@@ -238,8 +284,14 @@ def build_oos_gmp_report_pptx(
         )
         minor.columns = ["원인", "건수"]
         if not minor.empty:
+            _caption(s, "원인 소분류", left=6.9, top=1.5, width=5.8)
             _bar_chart(s, minor["원인"].tolist(), minor["건수"].tolist(),
-                       left=4.7, top=1.3, width=4.1, height=5.4, title="원인 소분류", horizontal=True)
+                       left=6.9, top=1.95, width=5.8, height=4.9, horizontal=True)
+    _footer(s, page=3, as_of=as_of)
+
+    # ── Slide 4: 유형·개선 — 시험종류별 + Analyst error(1메시지: 유형+개선효과) ──
+    s = prs.slides.add_slide(blank)
+    _panel_title(s, "시험종류 분포 · 개선 효과")
     if "시험종류" in filtered.columns:
         ttype = (
             filtered[filtered["시험종류"].notna() & (filtered["시험종류"] != "")]
@@ -247,12 +299,21 @@ def build_oos_gmp_report_pptx(
         )
         ttype.columns = ["시험종류", "건수"]
         if not ttype.empty:
+            _caption(s, "시험종류별 발생 건수", left=0.6, top=1.5, width=6.0)
             _bar_chart(s, ttype["시험종류"].tolist(), ttype["건수"].tolist(),
-                       left=9.0, top=1.3, width=4.0, height=5.4, title="시험종류별 발생 건수", color=_DARK)
-
-    # 푸터
-    _textbox(s, f"생성: KD-MoaQ · 광동제약 품질부문 · {datetime.now():%Y-%m-%d %H:%M}",
-             size=9, color=_GRAY, bold=False, top=7.05, left=0.4, width=9.0, height=0.35)
+                       left=0.6, top=1.95, width=6.0, height=4.9)
+    if "이상발생 원인" in df_full.columns and "건수기여도" in df_full.columns and year_col in df_full.columns:
+        ae_prev = round(float(df_full[(df_full[year_col] == prev_year) & (df_full["이상발생 원인"] == "Analyst error")]["건수기여도"].sum()))
+        ae_curr = round(float(filtered[filtered["이상발생 원인"] == "Analyst error"]["건수기여도"].sum())) if "이상발생 원인" in filtered.columns else 0
+        if ae_prev > 0 or ae_curr > 0:
+            _caption(s, "Analyst error 감소 추이", left=6.9, top=1.5, width=5.8)
+            _bar_chart(s, [str(prev_year), str(primary_year)], [ae_prev, ae_curr],
+                       left=6.9, top=1.95, width=5.8, height=4.2)
+            red = safe_pct(ae_prev - ae_curr, ae_prev) if ae_prev > 0 else 0.0
+            _txt = f"감소율 -{red:.0f}%" if red > 0 else f"증가율 +{abs(red):.0f}%"
+            _textbox(s, _txt, size=15, color=(_GREEN if red > 0 else _KD_RED), bold=True,
+                     left=6.9, top=6.25, width=5.8, height=0.5, align=PP_ALIGN.CENTER)
+    _footer(s, page=4, as_of=as_of)
 
     buf = io.BytesIO()
     prs.save(buf)
