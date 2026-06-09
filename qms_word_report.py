@@ -16,20 +16,38 @@
 from __future__ import annotations
 
 import io
+import re
 from datetime import datetime
 from typing import Optional, Tuple
 
 import pandas as pd
 from docx import Document
-from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt, RGBColor, Inches
 
 _MONTH_LABELS = [f"{m}월" for m in range(1, 13)]
-_KD_RED = RGBColor(0xE8, 0x30, 0x08)   # 사이드바 로고 샘플색(앱과 동일)
-_HDR_BG = "1F3A5F"                       # 표 헤더 배경(네이비)
+
+# ── 디자인 토큰 (광동 CI) ──
+_KD_RED = RGBColor(0xE8, 0x30, 0x08)   # 강조/경고
+_KD_RED_HEX = "E83008"
+_NAVY = RGBColor(0x1F, 0x3A, 0x5F)     # 헤더/주계열
+_NAVY_HEX = "1F3A5F"
+_HDR_BG = _NAVY_HEX                      # 하위호환
+_GREEN_HEX = "1F9D63"                    # 완료(성공)
+_INK = RGBColor(0x1B, 0x23, 0x30)       # 본문 잉크
+_SUB = RGBColor(0x51, 0x59, 0x6A)       # 보조 라벨
+_MUTED = RGBColor(0xC2, 0xC9, 0xD6)     # 0값 톤다운
+_ZEBRA = "F4F7FA"                        # 짝수행 줄무늬
+_LINE = "E1E6EF"                         # 옅은 가로선
+_TOTAL_BG = "EAF0F8"                     # 합계행 배경
 _GREY = RGBColor(0x80, 0x80, 0x80)
+_MONO = "Consolas"                       # 숫자/관리번호 등폭
+
+_NUM_NAME = ("건수", "합계", "순위", "비율", "값", "율", "%")
+_NUM_RE = re.compile(r"^\s*[-+]?[\d,]+(?:\.\d+)?\s*(?:건|%|일|개|회|점)?\s*$")
 
 
 def _set_cell_bg(cell, hex_color: str) -> None:
@@ -41,39 +59,171 @@ def _set_cell_bg(cell, hex_color: str) -> None:
     tc_pr.append(shd)
 
 
-def _style_runs(cell, *, bold=False, white=False, size=9) -> None:
+def _set_cell_margins(cell, *, top=40, bottom=40, left=90, right=90) -> None:
+    """셀 안쪽 여백(twips) — 답답함 제거."""
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tcMar = OxmlElement("w:tcMar")
+    for edge, w in (("top", top), ("left", left), ("bottom", bottom), ("right", right)):
+        el = OxmlElement(f"w:{edge}")
+        el.set(qn("w:w"), str(w))
+        el.set(qn("w:type"), "dxa")
+        tcMar.append(el)
+    tc_pr.append(tcMar)
+
+
+def _set_cell_borders(cell, *, top=None, bottom=None) -> None:
+    """셀 가로 테두리만(세로선 없음). 인자 = (hex, sz) 또는 None."""
+    tc_pr = cell._tc.get_or_add_tcPr()
+    borders = tc_pr.find(qn("w:tcBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tcBorders")
+        tc_pr.append(borders)
+    for edge, spec in (("top", top), ("bottom", bottom)):
+        if spec is None:
+            continue
+        color, sz = spec
+        el = borders.find(qn(f"w:{edge}"))
+        if el is None:
+            el = OxmlElement(f"w:{edge}")
+            borders.append(el)
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), str(sz))
+        el.set(qn("w:color"), color)
+        el.set(qn("w:space"), "0")
+
+
+def _repeat_header(row) -> None:
+    """긴 표가 페이지를 넘어가도 머리행 반복(w:tblHeader)."""
+    trPr = row._tr.get_or_add_trPr()
+    th = OxmlElement("w:tblHeader")
+    th.set(qn("w:val"), "true")
+    trPr.append(th)
+
+
+def _is_num_col(name, series) -> bool:
+    """숫자(우측정렬·등폭) 컬럼인지 — 이름 또는 값 패턴으로 판정."""
+    n = str(name)
+    if n in _MONTH_LABELS or any(k in n for k in _NUM_NAME):
+        return True
+    vals = [str(v).strip() for v in series if str(v).strip()]
+    return bool(vals) and all(_NUM_RE.match(v) for v in vals)
+
+
+def _fmt_num(txt) -> str:
+    """정수부 천단위 콤마(접미사 건/%/일 보존)."""
+    m = re.match(r"^\s*([-+]?\d+)(\.\d+)?\s*(\D*)\s*$", str(txt))
+    if not m:
+        return str(txt)
+    try:
+        head = f"{int(m.group(1)):,}"
+    except Exception:
+        return str(txt)
+    return f"{head}{m.group(2) or ''}{m.group(3) or ''}"
+
+
+def _is_zero(txt) -> bool:
+    return bool(re.match(r"^\s*0\s*(?:건|%|일|개|회|점)?\s*$", str(txt)))
+
+
+def _style_runs(cell, *, bold=False, white=False, size=10, mono=False, color=None) -> None:
     for p in cell.paragraphs:
         for r in p.runs:
             r.font.size = Pt(size)
             r.font.bold = bold
+            if mono:
+                r.font.name = _MONO
             if white:
                 r.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+            elif color is not None:
+                r.font.color.rgb = color
 
 
-def _add_df_table(doc, df: pd.DataFrame) -> None:
-    """DataFrame → Word 표(헤더 음영+굵게, 본문 9pt). 인덱스는 무시(필요 시 reset_index 후 전달)."""
+def _add_df_table(doc, df: pd.DataFrame, *, total_label: Optional[str] = None) -> None:
+    """DataFrame → Word 표: 가로선만(세로선 없음)·헤더 네이비+KD Red 밑줄·셀 수직중앙·
+    숫자열 우측정렬+등폭+콤마·짝수행 줄무늬·합계행 강조·머리행 반복·본문 10pt·0값 회색.
+    인덱스 무시(필요 시 reset_index 후 전달)."""
     cols = [str(c) for c in df.columns]
-    table = doc.add_table(rows=1, cols=len(cols))
-    try:
-        table.style = "Table Grid"   # 기본 템플릿에 항상 존재 → 안전
-    except Exception:
-        pass
+    ncol = len(cols)
+    num = [_is_num_col(cols[j], df[df.columns[j]]) for j in range(ncol)]
+    table = doc.add_table(rows=1, cols=ncol)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    hdr = table.rows[0].cells
+    table.autofit = True
+    # 헤더
+    hrow = table.rows[0]
+    _repeat_header(hrow)
     for j, c in enumerate(cols):
-        hdr[j].text = c
-        _set_cell_bg(hdr[j], _HDR_BG)
-        _style_runs(hdr[j], bold=True, white=True, size=9)
-    for _, row in df.iterrows():
+        cell = hrow.cells[j]
+        cell.text = c
+        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _set_cell_bg(cell, _NAVY_HEX)
+        _set_cell_margins(cell)
+        _set_cell_borders(cell, bottom=(_KD_RED_HEX, 12))   # 헤더 아래 KD Red 강조선
+        _style_runs(cell, bold=True, white=True, size=10)
+    # 데이터
+    for ri, (_, row) in enumerate(df.iterrows()):
+        is_total = total_label is not None and str(row[df.columns[0]]).strip() == total_label
         cells = table.add_row().cells
         for j, c in enumerate(df.columns):
+            cell = cells[j]
             val = row[c]
-            cells[j].text = "" if pd.isna(val) else str(val)
-            _style_runs(cells[j], size=9)
+            txt = "" if pd.isna(val) else str(val)
+            if num[j] and txt:
+                txt = _fmt_num(txt)
+            cell.text = txt
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            cell.paragraphs[0].alignment = (
+                WD_ALIGN_PARAGRAPH.RIGHT if num[j] else WD_ALIGN_PARAGRAPH.LEFT
+            )
+            _set_cell_margins(cell)
+            _set_cell_borders(cell, bottom=(_LINE, 4))
+            _col = _MUTED if (num[j] and _is_zero(txt)) else _INK
+            _style_runs(cell, size=10, mono=num[j], bold=is_total, color=_col)
+            if is_total:
+                _set_cell_bg(cell, _TOTAL_BG)
+                _set_cell_borders(cell, top=(_NAVY_HEX, 12))   # 합계행 상단 굵은 네이비선
+            elif ri % 2 == 1:
+                _set_cell_bg(cell, _ZEBRA)
+
+
+def _add_kpi_cards(doc, cards) -> None:
+    """요약을 KPI 카드 한 줄(큰 숫자+라벨, 상단 색 보더)로. cards=[(label, value, accent_hex), ...]."""
+    table = doc.add_table(rows=1, cols=len(cards))
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = True
+    for j, (label, value, accent) in enumerate(cards):
+        cell = table.rows[0].cells[j]
+        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        _set_cell_margins(cell, top=120, bottom=120, left=120, right=120)
+        _set_cell_borders(cell, top=(accent, 28), bottom=(_LINE, 4))
+        p1 = cell.paragraphs[0]
+        p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r1 = p1.add_run(value)
+        r1.font.size = Pt(20)
+        r1.font.bold = True
+        r1.font.color.rgb = _NAVY
+        r1.font.name = _MONO
+        p2 = cell.add_paragraph()
+        p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r2 = p2.add_run(label)
+        r2.font.size = Pt(9)
+        r2.font.color.rgb = _SUB
 
 
 def _heading(doc, text: str, level: int = 2) -> None:
-    doc.add_heading(text, level=level)
+    """색 있는 섹션 제목(KD Red 막대 + 네이비 굵게). ◆/◇ 기호는 막대로 대체."""
+    label = text.lstrip("◆◇ ").strip()
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(12)
+    p.paragraph_format.space_after = Pt(5)
+    bar = p.add_run("▌ ")
+    bar.font.color.rgb = _KD_RED
+    bar.font.size = Pt(13)
+    bar.font.bold = True
+    t = p.add_run(label)
+    t.font.color.rgb = _NAVY
+    t.font.size = Pt(13)
+    t.font.bold = True
 
 
 def _completed_mask(filtered: pd.DataFrame, completed_keywords: Tuple[str, ...]) -> pd.Series:
@@ -133,10 +283,12 @@ def build_oos_trend_report_docx(
     comp_w = float(filtered.loc[_completed_mask(filtered, completed_keywords), "건수기여도"].sum())
     comp_rate = safe_pct(comp_w, total_w)
     _heading(doc, "◆ 경향 요약")
-    _add_df_table(doc, pd.DataFrame({
-        "항목": ["전체 건수", "완료 건수", "완료율 (%)", "미완료 건수"],
-        "값": [f"{total_w:.0f}건", f"{comp_w:.0f}건", f"{comp_rate:.1f}%", f"{total_w - comp_w:.0f}건"],
-    }))
+    _add_kpi_cards(doc, [
+        ("전체 건수", f"{total_w:,.0f}", _NAVY_HEX),
+        ("완료 건수", f"{comp_w:,.0f}", _GREEN_HEX),
+        ("완료율", f"{comp_rate:.1f}%", _NAVY_HEX),
+        ("미완료 건수", f"{total_w - comp_w:,.0f}", _KD_RED_HEX),
+    ])
 
     # ── ◇ 시험종류별 월별 건수 ──
     if "시험종류" in filtered.columns and "월" in filtered.columns:
@@ -146,14 +298,24 @@ def build_oos_trend_report_docx(
                 pivot[m] = 0
         pivot = pivot[sorted(pivot.columns)]
         pivot.columns = _MONTH_LABELS
-        pivot["합계"] = pivot.sum(axis=1).round().astype(int)
-        pivot = pivot.astype(int).sort_values("합계", ascending=False)
+        pivot = pivot.astype(int)
+        # [빈 구간 축약] 합계 0인 달 열 제거(합계 열은 항상 유지) + 주석
+        nonzero = [m for m in _MONTH_LABELS if int(pivot[m].sum()) > 0]
+        dropped = [m for m in _MONTH_LABELS if m not in nonzero]
+        pivot = pivot[nonzero] if nonzero else pivot
+        pivot["합계"] = pivot[nonzero].sum(axis=1).astype(int) if nonzero else 0
+        pivot = pivot.sort_values("합계", ascending=False)
         total_row = pivot.sum().to_frame().T
         total_row.index = ["합계"]
         full = pd.concat([pivot, total_row])
         full.index.name = "시험종류"
         _heading(doc, "◇ 시험종류별 월별 건수")
-        _add_df_table(doc, full.reset_index())
+        _add_df_table(doc, full.reset_index(), total_label="합계")
+        if dropped:
+            note = doc.add_paragraph()
+            nr = note.add_run(f"※ {', '.join(dropped)}: 발생 없음")
+            nr.font.size = Pt(8)
+            nr.font.color.rgb = _GREY
 
     # ── ◇ 상위 OOS 시험항목 (Top 10) ──
     if "시험항목" in filtered.columns:
